@@ -44,15 +44,16 @@
         python-av = pkgs.python312Packages.buildPythonPackage rec {
           pname = "av";
           version = "14.3.0";
-          format = "wheel";
+          format = "setuptools";
           
           src = pkgs.fetchPypi {
-            inherit pname version format;
-            python = "cp312";
-            abi = "cp312";
-            platform = "macosx_12_0_arm64";
-            hash = "sha256-3Q36APPHqC/4H9pNY+TIXknLJ3h2v2iYXw9wC1Qy8b0=";
+            inherit pname version;
+            hash = "sha256-XN7NitZwLFUg/O0MLlYAR7fZ+I/2e5WKq/rxV+C4uOY=";
           };
+          
+          nativeBuildInputs = [
+            pkgs.pkg-config
+          ];
           
           buildInputs = [
             pkgs.ffmpeg
@@ -62,7 +63,14 @@
             numpy
           ];
           
+          # Disable tests that require internet access
           doCheck = false;
+          
+          # Patch to work with newer FFmpeg versions
+          postPatch = ''
+            substituteInPlace setup.py \
+              --replace 'ffmpeg_version = "55.110.100"' 'ffmpeg_version = "60.3.100"'
+          '';
         };
         
         # Spandrel package for model loading
