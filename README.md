@@ -6,6 +6,7 @@ A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymo
 
 - Provides ComfyUI packaged with Python 3.12
 - Reproducible environment through Nix flakes
+- Hybrid dependency management to avoid package collisions
 - Development shell for contributing or customizing
 
 ## Usage
@@ -39,7 +40,7 @@ nix profile install github:jamesbrink/comfy-ui
 
 The flake is designed to be simple and extensible. You can customize it by:
 
-1. Adding additional Python packages in the `comfyEnv` definition
+1. Adding Python packages in the `pythonEnv` definition or in requirements files
 2. Modifying runtime parameters in the `installPhase`
 3. Pinning to a specific ComfyUI version by changing the `rev` in `fetchFromGitHub`
 

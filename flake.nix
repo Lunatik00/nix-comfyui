@@ -17,31 +17,26 @@
           };
         };
 
+        # Basic Python interpreter
         python = pkgs.python312;
         
-        # Define the Python packages we need
-        pythonPackages = ps: with ps; [
-          # Core dependencies
-          pip
-          setuptools
-          wheel
-          
-          # Basic dependencies
-          numpy
-          pillow
-          pyyaml
-          requests
-          einops
-          kornia
-          typing-extensions
-          psutil
-          aiohttp
-          scipy
-          tqdm
-        ];
-        
-        # Create a Python environment with the base packages
-        baseEnv = python.withPackages pythonPackages;
+        # Simplified approach - only include the minimum necessary packages
+        # directly, and let ComfyUI use pip to install the rest
+        pythonEnv = pkgs.python312.buildEnv.override {
+          extraLibs = with pkgs.python312Packages; [
+            # Core Python tools
+            pip
+            setuptools
+            wheel
+            
+            # Only include a minimal set of packages to avoid collisions
+            # These are the absolute essentials ComfyUI will need to bootstrap
+            numpy
+            pillow
+            requests
+          ];
+          ignoreCollisions = true;
+        };
         
       in {
         packages.default = pkgs.stdenv.mkDerivation {
@@ -57,16 +52,13 @@
           
           nativeBuildInputs = [
             pkgs.makeWrapper
+            pythonEnv
           ];
           
           buildInputs = [
-            baseEnv
-            # Add ML packages separately to avoid collisions
-            python.pkgs.torch-bin
-            python.pkgs.torchvision
-            python.pkgs.safetensors
-            python.pkgs.transformers
-            python.pkgs.opencv4
+            # Add system-level dependencies that Python packages might need
+            pkgs.libGL
+            pkgs.libGLU
           ];
           
           # Skip build phase as ComfyUI is a Python application that doesn't need building
@@ -83,17 +75,29 @@
             # Copy ComfyUI files
             cp -r $src/* $out/share/comfy-ui/
             
-            # Create wrapper script with proper PYTHONPATH
-            makeWrapper ${python}/bin/python $out/bin/comfy-ui \
-              --prefix PYTHONPATH : "${baseEnv}/${python.sitePackages}" \
-              --prefix PYTHONPATH : "${python.pkgs.torch-bin}/${python.sitePackages}" \
-              --prefix PYTHONPATH : "${python.pkgs.torchvision}/${python.sitePackages}" \
-              --prefix PYTHONPATH : "${python.pkgs.safetensors}/${python.sitePackages}" \
-              --prefix PYTHONPATH : "${python.pkgs.transformers}/${python.sitePackages}" \
-              --prefix PYTHONPATH : "${python.pkgs.opencv4}/${python.sitePackages}" \
-              --prefix PYTHONPATH : "$out/share/comfy-ui" \
-              --run "cd $out/share/comfy-ui" \
-              --add-flags "main.py"
+            # Create requirements-nix.txt without torch-related packages
+            cat > $out/share/comfy-ui/requirements-nix.txt << EOL
+            pyyaml
+            tqdm
+            aiohttp
+            yarl
+            scipy
+            psutil
+            typing-extensions
+            einops
+            transformers
+            tokenizers
+            sentencepiece
+            safetensors
+            kornia
+            opencv-python
+            EOL
+            
+            # Create a wrapper script that sets up the environment and installs dependencies
+            makeWrapper ${pythonEnv}/bin/python $out/bin/comfy-ui \
+              --add-flags "$out/share/comfy-ui/main.py" \
+              --run "cd $out/share/comfy-ui && ${pythonEnv}/bin/pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 torchsde && ${pythonEnv}/bin/pip install -r requirements-nix.txt" \
+              --set PYTHONPATH "$out/share/comfy-ui:$PYTHONPATH"
           '';
           
           meta = with pkgs.lib; {
@@ -112,16 +116,38 @@
         
         devShells.default = pkgs.mkShell {
           packages = [
-            baseEnv
-            python.pkgs.torch-bin
-            python.pkgs.torchvision
-            python.pkgs.safetensors
-            python.pkgs.transformers
-            python.pkgs.opencv4
+            pythonEnv
           ];
           
           shellHook = ''
             echo "ComfyUI development environment activated"
+            echo "Installing required dependencies..."
+            
+            # Create a minimal requirements file for pip installation
+            cat > requirements-nix.txt << EOL
+            torch==2.5.1
+            torchvision==0.20.1
+            torchaudio==2.5.1
+            torchsde
+            pyyaml
+            tqdm
+            aiohttp
+            yarl
+            scipy
+            psutil
+            typing-extensions
+            einops
+            transformers
+            tokenizers
+            sentencepiece
+            safetensors
+            kornia
+            opencv-python
+            EOL
+            
+            # Install dependencies via pip to avoid Nix collisions
+            pip install -r requirements-nix.txt
+            
             echo "Run 'python main.py' to start ComfyUI"
             export PYTHONPATH="$PWD:$PYTHONPATH"
           '';
