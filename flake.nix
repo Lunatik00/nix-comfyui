@@ -349,9 +349,9 @@ fi
 VENV_SITE_PACKAGES="\$COMFY_VENV/lib/python3.12/site-packages"
 export PYTHONPATH="\$CODE_DIR:\$VENV_SITE_PACKAGES:\${PYTHONPATH:-}"
 
-# Create memory patch script in the persistent directory after it's set up
-MEMORY_PATCH_SCRIPT="\$CODE_DIR/memory_patch.py"
-cat > "\$MEMORY_PATCH_SCRIPT" << EOF
+# Create memory management patch file
+echo "Creating memory patch script..."
+cat > "\$CODE_DIR/memory_patch.py" << 'PATCHEOF'
 import torch
 import gc
 import os
@@ -363,24 +363,44 @@ gc.set_threshold(100, 5, 5)
 original_load = torch.load
 def patched_load(*args, **kwargs):
     # Force garbage collection before loading a model
+    print("Memory management: Collecting garbage before model load")
     gc.collect()
-    torch.mps.empty_cache()
+    if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+        torch.mps.empty_cache()
     
     result = original_load(*args, **kwargs)
     
     # Force garbage collection after loading a model
+    print("Memory management: Collecting garbage after model load")
     gc.collect()
-    torch.mps.empty_cache()
+    if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+        torch.mps.empty_cache()
     
     return result
 
 torch.load = patched_load
 print("Memory management patches applied successfully")
-EOF
+PATCHEOF
 
-# Apply memory management patch before starting the main app
+# Inject memory patches into comfy/model_management.py to fix memory issues
+if [ -f "\$CODE_DIR/comfy/model_management.py" ]; then
+  echo "Patching model_management.py for better memory handling..."
+  # Create backup
+  cp "\$CODE_DIR/comfy/model_management.py" "\$CODE_DIR/comfy/model_management.py.bak"
+  
+  # Inject import for our memory patch module
+  sed -i.bak '1s/^/import sys\nimport gc\n/' "\$CODE_DIR/comfy/model_management.py"
+  
+  # Add explicit garbage collection calls to the load_model_gpu function
+  sed -i.bak '/def load_model_gpu(/a \
+    # Explicit garbage collection before loading model\n    gc.collect()\n    if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):\n        torch.mps.empty_cache()' "\$CODE_DIR/comfy/model_management.py"
+  
+  echo "Model management patched successfully"
+fi
+
+# Apply the memory patch script before starting the app
 echo "Applying memory management patches..."
-${pythonEnv}/bin/python "\$MEMORY_PATCH_SCRIPT" || echo "Warning: Memory patch failed but continuing anyway"
+${pythonEnv}/bin/python "\$CODE_DIR/memory_patch.py" || echo "Warning: Memory patch failed but continuing anyway"
 exec ${pythonEnv}/bin/python "\$CODE_DIR/main.py" --port "\$COMFY_PORT" "\$@"
 EOF
 
