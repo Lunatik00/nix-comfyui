@@ -40,6 +40,10 @@
           doCheck = false;
         };
         
+        # Model downloader patches
+        modelDownloaderPatch = ./patches/model_downloader_patch.py;
+        frontendPatch = ./patches/frontend_download_patch.js;
+        
         # Python environment with minimal dependencies
         # Most dependencies will be installed via pip in the virtual environment
         pythonEnv = pkgs.python312.buildEnv.override {
@@ -51,11 +55,13 @@
           ignoreCollisions = true;
         };
         
-        # Use the external launcher script with variable substitution
+        # Create launcher script with substituted variables
         launcherScript = pkgs.substituteAll {
           src = ./scripts/launcher.sh;
           pythonEnv = pythonEnv;
           comfyuiSrc = comfyui-src;
+          modelDownloaderPatch = modelDownloaderPatch;
+          frontendPatch = frontendPatch;
         };
         
         packages.default = pkgs.stdenv.mkDerivation {

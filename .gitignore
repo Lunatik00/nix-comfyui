@@ -4,6 +4,7 @@ result-*
 .direnv/
 .devenv/
 /result
+/src/
 
 # Python
 __pycache__/

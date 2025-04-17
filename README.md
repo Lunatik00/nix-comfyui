@@ -10,6 +10,7 @@ A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymo
 - Optimized for Apple Silicon with PyTorch nightly builds
 - Persistent user data directory
 - Includes ComfyUI-Manager for easy extension installation
+- Improved model download experience with automatic backend downloads
 
 ## Usage
 
