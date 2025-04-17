@@ -24,8 +24,8 @@
         comfyui-src = pkgs.fetchFromGitHub {
           owner = "comfyanonymous";
           repo = "ComfyUI";
-          rev = "7d4b529ace3cd56e1b4de02daa87fa6b8f6789e7"; # v0.3.28
-          hash = "sha256-Eoz4rOXk7R9QFgWdrmUyaI82lnvx2e2aL7znUXKP9QU=";
+          rev = "a14c2fc3565277dfe8ab0ecb22a86c1d0a1f72cf"; # v0.3.28
+          sha256 = "sha256-nkc5+4QDlAAxgBAf9VrHvTzAbx5vgxV5uPdL/r+kKjs="; # Will need to be updated
         };
         
         # The comfyui-frontend-package is now included directly from the repo
