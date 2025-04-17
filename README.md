@@ -16,11 +16,14 @@ A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymo
 ### Running ComfyUI
 
 ```bash
-# Run directly from the flake
+# Run directly from the flake if you've cloned the repository
 nix run
 
-# Or if you've cloned the repository
-nix run .#
+# Run directly from GitHub without cloning the repository
+nix run github:jamesbrink/comfy-ui
+
+# Run a specific version using the commit hash
+nix run github:jamesbrink/comfy-ui/[commit-hash]
 ```
 
 ### Development Shell
@@ -43,8 +46,17 @@ nix profile install github:jamesbrink/comfy-ui
 The flake is designed to be simple and extensible. You can customize it by:
 
 1. Adding Python packages in the `pythonEnv` definition
-2. Modifying runtime parameters in the `installPhase`
+2. Modifying the launcher script in `scripts/launcher.sh`
 3. Pinning to a specific ComfyUI version by changing the `rev` in `fetchFromGitHub`
+
+### Project Structure
+
+This flake uses a multi-file approach for better maintainability:
+
+- `flake.nix` - Main flake definition and package configuration
+- `scripts/launcher.sh` - The launcher script that sets up the environment and runs ComfyUI
+
+This structure makes it easier to maintain and extend the flake as more features are added.
 
 ## Data Persistence
 
