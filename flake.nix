@@ -136,7 +136,8 @@ if [ ! -d "\$PIP_VENV" ]; then
   echo "Creating virtual environment for additional packages at \$PIP_VENV"
   ${pythonEnv}/bin/python -m venv "\$PIP_VENV"
   echo "Installing required packages..."
-  "\$PIP_VENV/bin/pip" install comfyui-frontend-package spandrel av torchvision torch torchaudio
+  # Only install non-torch packages through pip to avoid version conflicts
+  "\$PIP_VENV/bin/pip" install comfyui-frontend-package spandrel av
 else
   # Check if packages are installed and install them if needed
   if ! "\$PIP_VENV/bin/pip" show spandrel &>/dev/null; then
@@ -146,6 +147,10 @@ else
   if ! "\$PIP_VENV/bin/pip" show av &>/dev/null; then
     echo "Installing missing package: av"
     "\$PIP_VENV/bin/pip" install av
+  fi
+  if ! "\$PIP_VENV/bin/pip" show comfyui-frontend-package &>/dev/null; then
+    echo "Installing missing package: comfyui-frontend-package"
+    "\$PIP_VENV/bin/pip" install comfyui-frontend-package
   fi
 fi
 
