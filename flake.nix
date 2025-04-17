@@ -107,19 +107,26 @@ mkdir -p "\$USER_DIR/user"
 mkdir -p "\$USER_DIR/input"
 mkdir -p "\$USER_DIR/input/3d"
 
-# Create symbolic links for writable directories
-cd "$out/share/comfy-ui"
+# Create a fresh temporary directory to work in
 TMP_DIR=\$(mktemp -d)
+chmod 755 "\$TMP_DIR"
+
+# Copy ComfyUI files to the temporary directory with proper permissions
+cd "$out/share/comfy-ui"
 cp -r "$out/share/comfy-ui"/* "\$TMP_DIR"/
-rm -rf "\$TMP_DIR/user" || true
-rm -rf "\$TMP_DIR/input" || true
 
-# Link user data directories
-ln -sf "\$USER_DIR/user" "\$TMP_DIR/user"
-ln -sf "\$USER_DIR/input" "\$TMP_DIR/input"
+# Ensure everything in the temp directory is writable
+find "\$TMP_DIR" -type d -exec chmod 755 {} \;
+find "\$TMP_DIR" -type f -exec chmod 644 {} \;
 
-# Create input directories that need to be writable
+# Set up input and user directories
+mkdir -p "\$TMP_DIR/input"
 mkdir -p "\$TMP_DIR/input/3d"
+mkdir -p "\$TMP_DIR/user"
+
+# Create symlinks to persistent storage
+ln -sf "\$USER_DIR/user" "\$TMP_DIR/"
+ln -sf "\$USER_DIR/input" "\$TMP_DIR/"
 
 # Create and activate a Python venv for additional packages
 PIP_VENV="\$USER_DIR/venv"
