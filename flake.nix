@@ -14,6 +14,7 @@
           inherit system;
           config = {
             allowUnfree = true;
+            allowUnsupportedSystem = true;
           };
         };
 
@@ -51,6 +52,19 @@
         # Note: we'll use direct pip installation for spandrel and av in the launcher script
         
         # Comprehensive Python environment with all required dependencies
+        # Environment variables to help prevent tcmalloc crashes
+        memoryEnv = {
+          # Force system malloc instead of tcmalloc
+          PYTHONMALLOC = "malloc";
+          
+          # Disable tcmalloc completely
+          TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD = "10000000000";
+          
+          # For Apple Silicon MPS
+          PYTORCH_MPS_HIGH_WATERMARK_RATIO = "0.0";
+          PYTORCH_ENABLE_MPS_FALLBACK = "1";
+        };
+
         pythonEnv = pkgs.python312.buildEnv.override {
           extraLibs = with pkgs.python312Packages; [
             # Core Python tools
@@ -280,37 +294,32 @@ echo "Press Ctrl+C to exit"
 export COMFY_ENABLE_AUDIO_NODES=True
 
 # ===== MEMORY MANAGEMENT FOR STABLE DIFFUSION MODELS =====
-# Disable tcmalloc completely to avoid allocation crashes on Apple Silicon
-export TCMALLOC_RELEASE_RATE=10000000
+# The following environment variables help prevent the tcmalloc crashes
+# on Apple Silicon when loading large models like SDXL
 
-# Use standard malloc instead of tcmalloc
-export PYTHONMALLOC=malloc
+# Force system allocator instead of tcmalloc
+export LD_PRELOAD=/usr/lib/libc.dylib
+export DYLD_INSERT_LIBRARIES=/usr/lib/libc.dylib
 
-# Force MPS to be more conservative with memory
+# Set PyTorch to use the system allocator
+export PYTORCH_NO_CUDA_MEMORY_CACHING=1
+export PYTORCH_USE_PYTORCH_ALLOCATOR=1
+export OMP_NUM_THREADS=1
+
+# Disable GPU features that might be unstable
+export DISABLE_TENSOR_CORES=1
+
+# Apple Silicon MPS-specific settings
 export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
-
-# Disable specialized MPS kernels that might cause crashes
 export PYTORCH_MPS_ENABLE_SPECIALIZED_KERNELS=0
- 
-# Always enable CPU fallback 
 export PYTORCH_ENABLE_MPS_FALLBACK=1
 
-# Turn on debug mode only when needed
-export PYTORCH_MPS_DEBUG=0
-
-# Force models to load in half precision to reduce memory usage
-export COMFY_HALF_PRECISION=1
+# Model precision settings
 export COMFY_PRECISION="fp16"
 export COMFY_FORCE_FP16=True
 
-# Force CPU for the most memory-intensive operations, especially when loading models
-export COMFY_CPU_ONLY="VAE CLIP_VISION CLIP"
-
-# Set explicit model paths
-export COMFY_EXTRA_MODEL_PATHS="\$BASE_DIR/models"
-
-# Configure Python's GC to be more aggressive
-export PYTHONGC="threshold=100,5,5"
+# Let the CPU handle memory-intensive operations
+export COMFY_CPU_ONLY="VAE CLIP UNET"
 
 # Create a virtual environment for the extra packages if it doesn't exist
 COMFY_VENV="\$BASE_DIR/venv"
