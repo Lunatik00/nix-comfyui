@@ -52,55 +52,22 @@
         # Note: we'll use direct pip installation for spandrel and av in the launcher script
         
         # Comprehensive Python environment with all required dependencies
-        # Environment variables to help prevent tcmalloc crashes
-        memoryEnv = {
-          # Force system malloc instead of tcmalloc
-          PYTHONMALLOC = "malloc";
-          
-          # Disable tcmalloc completely
-          TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD = "10000000000";
-          
-          # For Apple Silicon MPS
-          PYTORCH_MPS_HIGH_WATERMARK_RATIO = "0.0";
-          PYTORCH_ENABLE_MPS_FALLBACK = "1";
-        };
-
+        # Minimal Python environment with just the base tools we need
+        # Most dependencies will be installed via pip in the virtual environment
         pythonEnv = pkgs.python312.buildEnv.override {
           extraLibs = with pkgs.python312Packages; [
             # Core Python tools
             setuptools
             wheel
+            pip
+            virtualenv
             
-            # ComfyUI dependencies
-            numpy
-            pillow
+            # Basic utilities
             requests
-            pyyaml
-            tqdm
-            aiohttp
-            yarl
-            scipy
-            psutil
-            typing-extensions
-            einops
-            torch-bin
-            torchvision-bin
-            torchaudio-bin
-            torchsde
-            transformers
-            tokenizers
-            sentencepiece
-            safetensors
-            kornia
-            opencv4  # Nix equivalent of opencv-python
+            rich
             
-            # Additional dependencies that might be needed
-            matplotlib
-            jsonschema
-            
-            # Include the ComfyUI frontend package
+            # Only keep the ComfyUI frontend package in the flake
             comfyui-frontend-package
-            # We'll install av and spandrel directly in the persistent directory
           ];
           ignoreCollisions = true;
         };
@@ -297,226 +264,70 @@ export COMFY_ENABLE_AUDIO_NODES=True
 # The following environment variables help prevent the tcmalloc crashes
 # on Apple Silicon when loading large models like SDXL
 
-# Force system allocator instead of tcmalloc
-export LD_PRELOAD=/usr/lib/libc.dylib
-export DYLD_INSERT_LIBRARIES=/usr/lib/libc.dylib
-
-# Let's keep it simple for Apple Silicon - use fewer environment variables
-# and focus on a more direct approach
-export PYTORCH_NO_CUDA_MEMORY_CACHING=1
-export PYTHONMALLOC=malloc
+# Recommended settings for Apple Silicon, but kept minimal
+export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
 export COMFY_PRECISION="fp16"
 
-# Create a patch file to modify how ComfyUI loads models on macOS
-cat > "\$CODE_DIR/macos_model_patch.py" << 'PATCH_EOF'
-import os
-import sys
-import platform
-
-# Check if we're on macOS
-if platform.system() == 'Darwin':
-    print("Applying macOS patch for model loading")
-    
-    # Monkey patch torch.load to use CPU first
-    import torch
-    import gc
-    original_load = torch.load
-    
-    def safe_macos_load(*args, **kwargs):
-        # Clear memory before loading
-        gc.collect()
-        if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
-            torch.mps.empty_cache()
-            
-        # Always load models to CPU first, then transfer
-        if 'map_location' not in kwargs:
-            kwargs['map_location'] = 'cpu'
-            
-        # Load the model
-        try:
-            result = original_load(*args, **kwargs)
-        except RuntimeError as e:
-            print(f"Error loading model: {e}")
-            # Try one more time with aggressive garbage collection
-            gc.collect()
-            if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
-                torch.mps.empty_cache()
-            result = original_load(*args, **kwargs)
-        
-        # Clear memory after loading
-        gc.collect()
-        
-        return result
-        
-    # Apply the patch
-    torch.load = safe_macos_load
-    print("Successfully patched torch.load for macOS")
-
-# Now patch the model_management.py file to change how models are loaded
-# This is the most direct approach to prevent the tcmalloc crash
-if platform.system() == 'Darwin':
-    try:
-        import comfy.model_management as model_management
-        original_load_model_gpu = model_management.load_model_gpu
-        
-        def safe_load_model_gpu(model):
-            # When on macOS, always ensure models are on CPU first
-            print("Safely loading model using CPU intermediary step")
-            model.to("cpu")
-            gc.collect()
-            if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
-                torch.mps.empty_cache()
-                
-            # Now load to GPU safely in chunks
-            return original_load_model_gpu(model)
-            
-        # Apply the patch
-        model_management.load_model_gpu = safe_load_model_gpu
-        print("Successfully patched model_management for safer macOS loading")
-    except Exception as e:
-        print(f"Warning: Could not patch model_management: {e}")
-        
-print("MacOS model loading patches complete")
-PATCH_EOF
-
-# Apply the patch before running ComfyUI
-${pythonEnv}/bin/python "\$CODE_DIR/macos_model_patch.py" || echo "Warning: Model patch failed, but continuing"
-
-# Create a virtual environment for the extra packages if it doesn't exist
+# Create a virtual environment for ComfyUI
 COMFY_VENV="\$BASE_DIR/venv"
 if [ ! -d "\$COMFY_VENV" ]; then
-  echo "Creating virtual environment for extra packages at \$COMFY_VENV"
+  echo "Creating virtual environment for ComfyUI at \$COMFY_VENV"
   ${pythonEnv}/bin/python -m venv "\$COMFY_VENV"
   
-  # Install the necessary packages that ComfyUI can't find through Nix
-  echo "Installing required additional packages..."
-  "\$COMFY_VENV/bin/pip" install spandrel==0.4.1 av==14.1.0 GitPython toml rich
-fi
-
-# Make sure the packages are up to date
-if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^spandrel==0.4.1\$") -eq 0 ]; then
-  echo "Updating spandrel package..."
-  "\$COMFY_VENV/bin/pip" install spandrel==0.4.1
-fi
-
-if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^av==14.1.0\$") -eq 0 ]; then
-  echo "Updating av package..."
-  "\$COMFY_VENV/bin/pip" install av==14.1.0
-fi
-
-if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^GitPython\$") -eq 0 ]; then
-  echo "Installing GitPython for ComfyUI-Manager..."
-  "\$COMFY_VENV/bin/pip" install GitPython
-fi
-
-if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^toml\$") -eq 0 ]; then
-  echo "Installing toml for ComfyUI-Manager..."
-  "\$COMFY_VENV/bin/pip" install toml
-fi
-
-if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^rich\$") -eq 0 ]; then
-  echo "Installing rich for ComfyUI-Manager..."
-  "\$COMFY_VENV/bin/pip" install rich
-fi
-
-# Set up Python path to include both Nix packages and venv packages
-VENV_SITE_PACKAGES="\$COMFY_VENV/lib/python3.12/site-packages"
-export PYTHONPATH="\$CODE_DIR:\$VENV_SITE_PACKAGES:\${PYTHONPATH:-}"
-
-# Create memory management patch file
-echo "Creating memory management patches for Apple Silicon..."
-cat > "\$CODE_DIR/memory_patch.py" << 'PATCHEOF'
-import torch
-import gc
-import os
-import sys
-
-# Aggressive garbage collection settings
-gc.set_threshold(100, 5, 5)
-
-# Try to disable tcmalloc's problematic behavior
-disable_tcmalloc = True
-
-# For Apple Silicon, we need special memory management
-print(f"PyTorch version: {torch.__version__}")
-print(f"Python version: {sys.version}")
-print(f"Is MPS available: {torch.backends.mps.is_available()}")
-
-# Monkey patch the model loading process
-original_load = torch.load
-def safe_load(*args, **kwargs):
-    # Force garbage collection before loading
-    print("Memory patch: Running aggressive garbage collection before model load")
-    for _ in range(3):  # Multiple GC passes
-        gc.collect()
-        
-    if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
-        torch.mps.empty_cache()
-    
-    # Try to ensure we're using the safest memory profile
-    print("Memory patch: Loading model with safe memory settings")
-    
-    # Use a try-except block to handle potential memory errors
-    try:
-        # Load the model with reduced memory usage
-        if 'map_location' not in kwargs:
-            # For Apple Silicon, initially load on CPU then transfer
-            kwargs['map_location'] = 'cpu'
-        result = original_load(*args, **kwargs)
-    except RuntimeError as e:
-        if "CUDA" in str(e) or "memory" in str(e).lower():
-            print("Memory error during model load - trying with more aggressive GC")
-            gc.collect()
-            if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
-                torch.mps.empty_cache()
-            # Try again with reduced memory
-            result = original_load(*args, **kwargs)
-        else:
-            raise
-    
-    # Force garbage collection after loading
-    print("Memory patch: Running garbage collection after model load")
-    gc.collect()
-    if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
-        torch.mps.empty_cache()
-    
-    return result
-
-# Apply the patch
-torch.load = safe_load
-print("Memory management patches applied successfully!")
-PATCHEOF
-
-# Inject memory patches into comfy/model_management.py to fix memory issues
-if [ -f "\$CODE_DIR/comfy/model_management.py" ]; then
-  echo "Patching model_management.py for better memory handling..."
-  # Create backup
-  cp "\$CODE_DIR/comfy/model_management.py" "\$CODE_DIR/comfy/model_management.py.bak"
+  # Upgrade pip
+  "\$COMFY_VENV/bin/pip" install --upgrade pip
   
-  # Inject import for our memory patch module
-  sed -i.bak '1s/^/import sys\nimport gc\n/' "\$CODE_DIR/comfy/model_management.py"
+  # Install critical dependencies first
+  echo "Installing critical dependencies..."
+  "\$COMFY_VENV/bin/pip" install pyyaml pillow numpy
   
-  # Add explicit garbage collection calls to the load_model_gpu function
-  sed -i.bak '/def load_model_gpu(/a \
-    # Explicit garbage collection before loading model\n    gc.collect()\n    if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):\n        torch.mps.empty_cache()' "\$CODE_DIR/comfy/model_management.py"
+  # Install the base requirements for ComfyUI directly from the repository
+  echo "Installing base requirements from ComfyUI..."
+  "\$COMFY_VENV/bin/pip" install -r "\$CODE_DIR/requirements.txt"
   
-  echo "Model management patched successfully"
+  # Install PyTorch with Apple Silicon MPS support
+  echo "Installing PyTorch with Apple Silicon support..."
+  "\$COMFY_VENV/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cpu
+  
+  # Install additional packages needed for ComfyUI
+  echo "Installing additional packages..."
+  "\$COMFY_VENV/bin/pip" install spandrel av GitPython toml rich safetensors
 fi
 
-# Import our macOS patch module at application startup
-echo "#!/usr/bin/env python
+# Check for important packages, but let pip handle most dependencies
+if [ ! -f "\$CODE_DIR/custom_nodes/ComfyUI-Manager" ] && [ ! -L "\$CODE_DIR/custom_nodes/ComfyUI-Manager" ]; then
+  echo "Installing ComfyUI-Manager..."
+  mkdir -p "\$CODE_DIR/custom_nodes"
+  git -c commit.gpgsign=false clone https://github.com/ltdrdata/ComfyUI-Manager "\$CODE_DIR/custom_nodes/ComfyUI-Manager"
+  "\$COMFY_VENV/bin/pip" install -r "\$CODE_DIR/custom_nodes/ComfyUI-Manager/requirements.txt"
+fi
 
-# Import the macOS patch first before any other imports
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import macos_model_patch
+# Use the virtual environment's Python and PYTHONPATH
+export PYTHONPATH="\$CODE_DIR:\${PYTHONPATH:-}"
 
-# Now import and run the normal main module
-from main import *
-" > "\$CODE_DIR/patched_main.py"
+# Create a configuration file for ComfyUI-Manager to prevent it from trying to install packages
+echo "Creating ComfyUI-Manager configuration..."
+mkdir -p "\$CODE_DIR/user/default/ComfyUI-Manager"
+cat > "\$CODE_DIR/user/default/ComfyUI-Manager/config.ini" << 'CONFIG_EOF'
+[default]
+config_version=0.7
+[manager]
+control_net_model_dir=\models\controlnet
+upscale_model_dir=\models\upscale_models
+lora_model_dir=\models\loras
+vae_model_dir=\models\vae
+gligen_model_dir=\models\gligen
+checkpoint_dir=\models\checkpoints
+custom_nodes_dir=custom_nodes
+clip_vision_dir=\models\clip_vision
+embedding_dir=\models\embeddings
+loras_dir=\models\loras
+prevent_direct_install=True
+privileged_hosting=False
+CONFIG_EOF
 
-chmod +x "\$CODE_DIR/patched_main.py"
-exec ${pythonEnv}/bin/python "\$CODE_DIR/patched_main.py" --port "\$COMFY_PORT" "\$@"
+# Use the venv's Python interpreter to run ComfyUI directly
+exec "\$COMFY_VENV/bin/python" "\$CODE_DIR/main.py" --port "\$COMFY_PORT" --force-fp16 "\$@"
 EOF
 
             chmod +x $out/bin/comfy-ui-launcher

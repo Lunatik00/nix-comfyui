@@ -1,15 +1,15 @@
 # ComfyUI Nix Flake
 
-A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with Python 3.12.
+A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with Python 3.12, optimized for Apple Silicon.
 
 ## Features
 
 - Provides ComfyUI packaged with Python 3.12
 - Reproducible environment through Nix flakes
-- Clean, purely Nix-based dependency management
+- Hybrid approach: Nix for environment management, pip for Python dependencies
+- Optimized for Apple Silicon with PyTorch nightly builds
 - Persistent user data directory
-- Automatic version matching for PyTorch ecosystem packages
-- Development shell for contributing or customizing
+- Includes ComfyUI-Manager for easy extension installation
 
 ## Usage
 
@@ -58,11 +58,13 @@ User data is stored in `~/.config/comfy-ui` with the following structure:
 
 This structure ensures your models, outputs, and custom nodes persist between application updates.
 
-## Current Limitations
+## Apple Silicon Support
 
-- Some optional nodes requiring additional dependencies (`av`, `spandrel`) are disabled
-- Audio and video processing nodes are currently disabled 
-- Adding custom nodes that need additional PyPi packages requires careful integration
+This flake is specifically optimized for Apple Silicon Macs:
+
+- Uses PyTorch nightly builds with improved MPS (Metal Performance Shaders) support
+- Enables FP16 precision mode for better performance
+- Sets optimal memory management parameters for macOS
 
 ## Version Information
 
@@ -70,10 +72,9 @@ This flake currently provides:
 
 - ComfyUI v0.3.28
 - Python 3.12.9
-- PyTorch 2.5.1 (with matching torchvision and torchaudio)
+- PyTorch nightly builds with Apple Silicon optimizations
 - ComfyUI Frontend Package 1.17.0
-
-These versions are carefully matched to ensure compatibility.
+- ComfyUI-Manager for extension management
 
 ## License
 
