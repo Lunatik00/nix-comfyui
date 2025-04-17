@@ -279,20 +279,34 @@ echo "Press Ctrl+C to exit"
 # Enable audio nodes and set environment variables for stable execution
 export COMFY_ENABLE_AUDIO_NODES=True
 
-# Memory management settings to improve stability with large models
-export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0  # Don't aggressively cache tensors
-export PYTORCH_MPS_ENABLE_SPECIALIZED_KERNELS=0  # Disable specialized kernels for better stability
-export PYTORCH_ENABLE_MPS_FALLBACK=1  # Enable CPU fallback for operations not supported by MPS
-export PYTORCH_MPS_DEBUG=0  # Disable debug for performance
+# ===== MEMORY MANAGEMENT FOR STABLE DIFFUSION MODELS =====
+# Force models to load on CPU first - this is more stable
+export CUDA_DEVICE_ORDER="PCI_BUS_ID"
+export CUDA_VISIBLE_DEVICES=""
+export COMMANDLINE_ARGS="--use-cpu all --disable-cuda-malloc"
 
-# Set lower precision for better memory usage
+# Force stable diffusion to use CPU for VAE and model loading, then MPS for inference
+export COMFY_CPU_ONLY="VAE CLIP_VISION CLIP UNET CONTROLNET GLIGEN INPAINT"
+
+# Force low precision for better memory usage
+export COMFY_PRECISION="fp16"
 export COMFY_FORCE_FP16=True
 
-# Memory management settings for tcmalloc to prevent crashes
-export MALLOC_CONF="background_thread:true,metadata_thp:auto,tcache:false"
+# Use safer memory allocation settings
+export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+export PYTORCH_MPS_ENABLE_SPECIALIZED_KERNELS=0
+export PYTORCH_ENABLE_MPS_FALLBACK=1
 
-# Set Python garbage collection to be more aggressive
+# Try to avoid the tcmalloc error by using a different allocator
+export MALLOC_CONF="background_thread:true,metadata_thp:auto,tcache:false,percpu_arena:percpu"
 export PYTHONMALLOC=malloc
+export TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD=10000000000
+
+# Enable garbage collection between model loads
+export COMFY_EXTRA_MODEL_PATHS="\$BASE_DIR/models"
+export SUNO_USE_SMALL_MODELS=1
+export SUNO_OFFLOAD_CPU=True
+export PYTORCH_NO_CUDA_MEMORY_CACHING=1
 
 # Create a virtual environment for the extra packages if it doesn't exist
 COMFY_VENV="\$BASE_DIR/venv"
@@ -334,6 +348,33 @@ fi
 # Set up Python path to include both Nix packages and venv packages
 VENV_SITE_PACKAGES="\$COMFY_VENV/lib/python3.12/site-packages"
 export PYTHONPATH="\$CODE_DIR:\$VENV_SITE_PACKAGES:\${PYTHONPATH:-}"
+
+# Create an additional script to patch ComfyUI's memory handling
+cat > "\$CODE_DIR/memory_patch.py" << 'EOF'
+import torch
+import gc
+
+# Monkey patch torch.load to add garbage collection
+original_load = torch.load
+def patched_load(*args, **kwargs):
+    # Force garbage collection before loading a model
+    gc.collect()
+    torch.mps.empty_cache()
+    
+    result = original_load(*args, **kwargs)
+    
+    # Force garbage collection after loading a model
+    gc.collect()
+    torch.mps.empty_cache()
+    
+    return result
+
+torch.load = patched_load
+print("Memory management patches applied successfully")
+EOF
+
+# Run the patch script before starting the main application
+${pythonEnv}/bin/python "\$CODE_DIR/memory_patch.py"
 exec ${pythonEnv}/bin/python "\$CODE_DIR/main.py" --port "\$COMFY_PORT" "\$@"
 EOF
 
