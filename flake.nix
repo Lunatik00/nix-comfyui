@@ -31,10 +31,13 @@
           pillow
           pyyaml
           requests
-          tqdm
+          einops
+          kornia
+          typing-extensions
+          psutil
           aiohttp
           scipy
-          psutil
+          tqdm
         ];
         
         # Create a Python environment with the base packages
