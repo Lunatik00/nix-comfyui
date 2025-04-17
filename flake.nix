@@ -280,33 +280,37 @@ echo "Press Ctrl+C to exit"
 export COMFY_ENABLE_AUDIO_NODES=True
 
 # ===== MEMORY MANAGEMENT FOR STABLE DIFFUSION MODELS =====
-# Force models to load on CPU first - this is more stable
-export CUDA_DEVICE_ORDER="PCI_BUS_ID"
-export CUDA_VISIBLE_DEVICES=""
-export COMMANDLINE_ARGS="--use-cpu all --disable-cuda-malloc"
+# Disable tcmalloc completely to avoid allocation crashes on Apple Silicon
+export TCMALLOC_RELEASE_RATE=10000000
 
-# Force stable diffusion to use CPU for VAE and model loading, then MPS for inference
-export COMFY_CPU_ONLY="VAE CLIP_VISION CLIP UNET CONTROLNET GLIGEN INPAINT"
+# Use standard malloc instead of tcmalloc
+export PYTHONMALLOC=malloc
 
-# Force low precision for better memory usage
+# Force MPS to be more conservative with memory
+export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+
+# Disable specialized MPS kernels that might cause crashes
+export PYTORCH_MPS_ENABLE_SPECIALIZED_KERNELS=0
+ 
+# Always enable CPU fallback 
+export PYTORCH_ENABLE_MPS_FALLBACK=1
+
+# Turn on debug mode only when needed
+export PYTORCH_MPS_DEBUG=0
+
+# Force models to load in half precision to reduce memory usage
+export COMFY_HALF_PRECISION=1
 export COMFY_PRECISION="fp16"
 export COMFY_FORCE_FP16=True
 
-# Use safer memory allocation settings
-export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
-export PYTORCH_MPS_ENABLE_SPECIALIZED_KERNELS=0
-export PYTORCH_ENABLE_MPS_FALLBACK=1
+# Force CPU for the most memory-intensive operations, especially when loading models
+export COMFY_CPU_ONLY="VAE CLIP_VISION CLIP"
 
-# Try to avoid the tcmalloc error by using a different allocator
-export MALLOC_CONF="background_thread:true,metadata_thp:auto,tcache:false,percpu_arena:percpu"
-export PYTHONMALLOC=malloc
-export TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD=10000000000
-
-# Enable garbage collection between model loads
+# Set explicit model paths
 export COMFY_EXTRA_MODEL_PATHS="\$BASE_DIR/models"
-export SUNO_USE_SMALL_MODELS=1
-export SUNO_OFFLOAD_CPU=True
-export PYTORCH_NO_CUDA_MEMORY_CACHING=1
+
+# Configure Python's GC to be more aggressive
+export PYTHONGC="threshold=100,5,5"
 
 # Create a virtual environment for the extra packages if it doesn't exist
 COMFY_VENV="\$BASE_DIR/venv"
@@ -350,36 +354,67 @@ VENV_SITE_PACKAGES="\$COMFY_VENV/lib/python3.12/site-packages"
 export PYTHONPATH="\$CODE_DIR:\$VENV_SITE_PACKAGES:\${PYTHONPATH:-}"
 
 # Create memory management patch file
-echo "Creating memory patch script..."
+echo "Creating memory management patches for Apple Silicon..."
 cat > "\$CODE_DIR/memory_patch.py" << 'PATCHEOF'
 import torch
 import gc
 import os
+import sys
 
-# Set up aggressive garbage collection
+# Aggressive garbage collection settings
 gc.set_threshold(100, 5, 5)
 
-# Monkey patch torch.load to add garbage collection
+# Try to disable tcmalloc's problematic behavior
+disable_tcmalloc = True
+
+# For Apple Silicon, we need special memory management
+print(f"PyTorch version: {torch.__version__}")
+print(f"Python version: {sys.version}")
+print(f"Is MPS available: {torch.backends.mps.is_available()}")
+
+# Monkey patch the model loading process
 original_load = torch.load
-def patched_load(*args, **kwargs):
-    # Force garbage collection before loading a model
-    print("Memory management: Collecting garbage before model load")
-    gc.collect()
+def safe_load(*args, **kwargs):
+    # Force garbage collection before loading
+    print("Memory patch: Running aggressive garbage collection before model load")
+    for _ in range(3):  # Multiple GC passes
+        gc.collect()
+        
     if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
         torch.mps.empty_cache()
     
-    result = original_load(*args, **kwargs)
+    # Try to ensure we're using the safest memory profile
+    print("Memory patch: Loading model with safe memory settings")
     
-    # Force garbage collection after loading a model
-    print("Memory management: Collecting garbage after model load")
+    # Use a try-except block to handle potential memory errors
+    try:
+        # Load the model with reduced memory usage
+        if 'map_location' not in kwargs:
+            # For Apple Silicon, initially load on CPU then transfer
+            kwargs['map_location'] = 'cpu'
+        result = original_load(*args, **kwargs)
+    except RuntimeError as e:
+        if "CUDA" in str(e) or "memory" in str(e).lower():
+            print("Memory error during model load - trying with more aggressive GC")
+            gc.collect()
+            if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+                torch.mps.empty_cache()
+            # Try again with reduced memory
+            result = original_load(*args, **kwargs)
+        else:
+            raise
+    
+    # Force garbage collection after loading
+    print("Memory patch: Running garbage collection after model load")
     gc.collect()
     if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
         torch.mps.empty_cache()
     
     return result
 
-torch.load = patched_load
-print("Memory management patches applied successfully")
+# Apply the patch
+torch.load = safe_load
+print("Memory management patches applied successfully!")
 PATCHEOF
 
 # Inject memory patches into comfy/model_management.py to fix memory issues
