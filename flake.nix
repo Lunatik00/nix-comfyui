@@ -104,13 +104,22 @@ set -e
 USER_DIR="\$HOME/.config/comfy-ui"
 mkdir -p "\$USER_DIR"
 mkdir -p "\$USER_DIR/user"
+mkdir -p "\$USER_DIR/input"
+mkdir -p "\$USER_DIR/input/3d"
 
 # Create symbolic links for writable directories
 cd "$out/share/comfy-ui"
 TMP_DIR=\$(mktemp -d)
 cp -r "$out/share/comfy-ui"/* "\$TMP_DIR"/
 rm -rf "\$TMP_DIR/user" || true
+rm -rf "\$TMP_DIR/input" || true
+
+# Link user data directories
 ln -sf "\$USER_DIR/user" "\$TMP_DIR/user"
+ln -sf "\$USER_DIR/input" "\$TMP_DIR/input"
+
+# Create input directories that need to be writable
+mkdir -p "\$TMP_DIR/input/3d"
 
 # Create and activate a Python venv for additional packages
 PIP_VENV="\$USER_DIR/venv"
@@ -118,7 +127,7 @@ if [ ! -d "\$PIP_VENV" ]; then
   echo "Creating virtual environment for additional packages at \$PIP_VENV"
   ${pythonEnv}/bin/python -m venv "\$PIP_VENV"
   echo "Installing required packages..."
-  "\$PIP_VENV/bin/pip" install comfyui-frontend-package spandrel av
+  "\$PIP_VENV/bin/pip" install comfyui-frontend-package spandrel av torchvision torch torchaudio
 else
   # Check if packages are installed and install them if needed
   if ! "\$PIP_VENV/bin/pip" show spandrel &>/dev/null; then
@@ -130,6 +139,10 @@ else
     "\$PIP_VENV/bin/pip" install av
   fi
 fi
+
+# Install the packages into the temporary ComfyUI directory to ensure they're found
+echo "Ensuring dependencies are available in the ComfyUI environment..."
+cp -r "\$PIP_VENV/lib/python3.12/site-packages/"* "\$TMP_DIR/"
 
 # Check if port 8188 is already in use
 if nc -z localhost 8188 2>/dev/null; then
