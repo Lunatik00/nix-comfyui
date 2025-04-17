@@ -45,9 +45,10 @@
           doCheck = false;
         };
         
-        # For simplicity, let's disable the spandrel package that's causing issues
-        # and disable the audio nodes that require it
-        # We can add it back later when we have time to properly configure it
+        # Using the built-in PyAV package from nixpkgs (v14.1.0)
+        # This is slightly older than the latest version but should work fine for our use case
+        
+        # Note: we'll use direct pip installation for spandrel and av in the launcher script
         
         # Comprehensive Python environment with all required dependencies
         pythonEnv = pkgs.python312.buildEnv.override {
@@ -85,6 +86,7 @@
             
             # Include the ComfyUI frontend package
             comfyui-frontend-package
+            # We'll install av and spandrel directly in the persistent directory
           ];
           ignoreCollisions = true;
         };
@@ -145,6 +147,7 @@ echo "Setting up ComfyUI environment in \$BASE_DIR"
 # Create directory structure if it doesn't exist
 mkdir -p "\$BASE_DIR"
 mkdir -p "\$CODE_DIR"
+mkdir -p "\$BASE_DIR/custom_nodes"
 
 # Only update the application code if it has changed
 if [ -f "\$CODE_DIR/VERSION" ] && [ "\$(cat "\$CODE_DIR/VERSION" 2>/dev/null)" = "0.3.28" ]; then
@@ -161,6 +164,26 @@ else
   chmod -R u+rw "\$CODE_DIR"
 fi
 
+# Install ComfyUI-Manager if not already installed
+COMFY_MANAGER_DIR="\$BASE_DIR/custom_nodes/ComfyUI-Manager"
+if [ ! -d "\$COMFY_MANAGER_DIR" ]; then
+  echo "Installing ComfyUI-Manager..."
+  git -c commit.gpgsign=false clone https://github.com/Comfy-Org/ComfyUI-Manager.git "\$COMFY_MANAGER_DIR"
+else
+  echo "ComfyUI-Manager already installed"
+  # Check if we should update
+  if [ -z "\$(find "\$COMFY_MANAGER_DIR" -name ".git" -mtime -7 2>/dev/null)" ]; then
+    echo "Updating ComfyUI-Manager (last updated > 7 days ago)"
+    cd "\$COMFY_MANAGER_DIR" && git -c commit.gpgsign=false pull
+  fi
+fi
+
+# Create a symlink to the manager in the app's custom_nodes directory
+if [ ! -d "\$CODE_DIR/custom_nodes" ]; then
+  mkdir -p "\$CODE_DIR/custom_nodes"
+fi
+ln -sf "\$COMFY_MANAGER_DIR" "\$CODE_DIR/custom_nodes/ComfyUI-Manager"
+
 # Ensure user data directories exist
 mkdir -p "\$BASE_DIR/output"
 mkdir -p "\$BASE_DIR/models"
@@ -175,18 +198,8 @@ ln -sf "\$BASE_DIR/input" "\$CODE_DIR/input"
 
 echo "Using Nix-provided packages - no additional pip installation needed"
 
-# Disable nodes that require problematic dependencies to avoid errors
-echo "Disabling nodes that might cause dependency issues..."
-
-# Disable audio nodes
-if [ -f "\$CODE_DIR/comfy_extras/nodes_audio.py" ]; then
-  mv "\$CODE_DIR/comfy_extras/nodes_audio.py" "\$CODE_DIR/comfy_extras/nodes_audio.py.disabled"
-  echo "Audio nodes disabled to prevent errors due to missing dependencies."
-fi
-
-# Create a disabled modules list
-echo "nodes_audio" > "\$CODE_DIR/comfy_extras/__disabled_modules__.txt"
-echo "Configured ComfyUI to skip problematic modules."
+# All node dependencies should now be available
+echo "All node dependencies are now available..."
 
 # Set the ComfyUI port - hardcode it for predictability
 COMFY_PORT="8188"
@@ -263,8 +276,49 @@ echo "\033[1;32mStarting ComfyUI...\033[0m"
 echo "Once the server starts, you can access ComfyUI at: http://127.0.0.1:\$COMFY_PORT"
 echo "Press Ctrl+C to exit"
 
-# Set Python path to include our code directory for custom packages
-export PYTHONPATH="\$CODE_DIR:\${PYTHONPATH:-}"
+# Enable audio nodes and make sure dependencies are available
+export COMFY_ENABLE_AUDIO_NODES=True
+
+# Create a virtual environment for the extra packages if it doesn't exist
+COMFY_VENV="\$BASE_DIR/venv"
+if [ ! -d "\$COMFY_VENV" ]; then
+  echo "Creating virtual environment for extra packages at \$COMFY_VENV"
+  ${pythonEnv}/bin/python -m venv "\$COMFY_VENV"
+  
+  # Install the necessary packages that ComfyUI can't find through Nix
+  echo "Installing required additional packages..."
+  "\$COMFY_VENV/bin/pip" install spandrel==0.4.1 av==14.1.0 GitPython toml rich
+fi
+
+# Make sure the packages are up to date
+if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^spandrel==0.4.1\$") -eq 0 ]; then
+  echo "Updating spandrel package..."
+  "\$COMFY_VENV/bin/pip" install spandrel==0.4.1
+fi
+
+if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^av==14.1.0\$") -eq 0 ]; then
+  echo "Updating av package..."
+  "\$COMFY_VENV/bin/pip" install av==14.1.0
+fi
+
+if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^GitPython\$") -eq 0 ]; then
+  echo "Installing GitPython for ComfyUI-Manager..."
+  "\$COMFY_VENV/bin/pip" install GitPython
+fi
+
+if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^toml\$") -eq 0 ]; then
+  echo "Installing toml for ComfyUI-Manager..."
+  "\$COMFY_VENV/bin/pip" install toml
+fi
+
+if [ \$("\$COMFY_VENV/bin/pip" freeze | grep -c "^rich\$") -eq 0 ]; then
+  echo "Installing rich for ComfyUI-Manager..."
+  "\$COMFY_VENV/bin/pip" install rich
+fi
+
+# Set up Python path to include both Nix packages and venv packages
+VENV_SITE_PACKAGES="\$COMFY_VENV/lib/python3.12/site-packages"
+export PYTHONPATH="\$CODE_DIR:\$VENV_SITE_PACKAGES:\${PYTHONPATH:-}"
 exec ${pythonEnv}/bin/python "\$CODE_DIR/main.py" --port "\$COMFY_PORT" "\$@"
 EOF
 
