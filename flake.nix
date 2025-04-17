@@ -124,9 +124,11 @@ mkdir -p "\$TMP_DIR/input"
 mkdir -p "\$TMP_DIR/input/3d"
 mkdir -p "\$TMP_DIR/user"
 
-# Create symlinks to persistent storage
-ln -sf "\$USER_DIR/user" "\$TMP_DIR/"
-ln -sf "\$USER_DIR/input" "\$TMP_DIR/"
+# Remove the temporary directories and create symlinks to persistent storage
+rm -rf "\$TMP_DIR/user"
+rm -rf "\$TMP_DIR/input"
+ln -sf "\$USER_DIR/user" "\$TMP_DIR/user"
+ln -sf "\$USER_DIR/input" "\$TMP_DIR/input"
 
 # Create and activate a Python venv for additional packages
 PIP_VENV="\$USER_DIR/venv"
@@ -151,29 +153,79 @@ fi
 echo "Ensuring dependencies are available in the ComfyUI environment..."
 cp -r "\$PIP_VENV/lib/python3.12/site-packages/"* "\$TMP_DIR/"
 
-# Check if port 8188 is already in use
-if nc -z localhost 8188 2>/dev/null; then
-  echo "\033[1;33mPort 8188 is already in use!\033[0m"
-  echo "ComfyUI is likely already running. If you want to start a new instance, try:"
-  echo "  1. Check if ComfyUI is already running at http://127.0.0.1:8188"
-  echo "  2. Stop any running ComfyUI instances"
-  echo "  3. Run this command again"
+# Set the ComfyUI port - hardcode it for predictability
+COMFY_PORT="8188"
+
+# Check if port is in use
+if nc -z localhost $COMFY_PORT 2>/dev/null; then
+  echo "\033[1;33mPort $COMFY_PORT is in use. ComfyUI may already be running.\033[0m"
   echo ""
-  echo "Would you like to open ComfyUI in your browser? (assuming it's running)"
-  read -p "[Y/n]: " response
-  if [[ "\$response" != "n" && "\$response" != "N" ]]; then
-    open http://127.0.0.1:8188
-  fi
-  exit 0
+  echo "Options:"
+  echo "  1. Open browser to existing ComfyUI: open http://127.0.0.1:$COMFY_PORT"
+  echo "  2. Try a different port (e.g., 8189): Exit and run with --port 8189"
+  echo "  3. Kill the process using port $COMFY_PORT (potentially unsafe)"
+  echo ""
+  echo -n "Enter choice (1-3, default=1): "
+  read choice
+  
+  case "$choice" in
+    "3")
+      echo "Attempting to free up the port..."
+      
+      # Try lsof (works on macOS and Linux)
+      PIDS=$(lsof -t -i:$COMFY_PORT 2>/dev/null)
+      if [ -n "$PIDS" ]; then
+        echo "Found process(es) with PIDs $PIDS using port $COMFY_PORT"
+        for PID in $PIDS; do
+          echo "Killing process $PID..."
+          kill -9 "$PID" 2>/dev/null
+        done
+      else
+        # Try alternate approach with netstat for macOS
+        echo "Trying alternate process finding methods..."
+        PIDS=$(netstat -anv | grep ".$COMFY_PORT " | awk '{print $9}' | sort -u)
+        if [ -n "$PIDS" ]; then
+          echo "Found process(es) with PIDs $PIDS using port $COMFY_PORT"
+          for PID in $PIDS; do
+            echo "Killing process $PID..."
+            kill -9 "$PID" 2>/dev/null
+          done
+        else
+          echo "Could not find any process using port $COMFY_PORT"
+        fi
+      fi
+      sleep 2
+      if nc -z localhost $COMFY_PORT 2>/dev/null; then
+        echo "\033[1;31mFailed to free up port $COMFY_PORT. Try a different port.\033[0m"
+        exit 1
+      fi
+      ;;
+    "2")
+      echo "To use a different port, restart with --port option."
+      exit 0
+      ;;
+    *)
+      # Default to option 1 - open browser
+      open http://127.0.0.1:$COMFY_PORT
+      exit 0
+      ;;
+  esac
 fi
+
+# Function to open browser once server starts
+echo "\033[1;36mWhen ComfyUI is running, open this URL in your browser:\033[0m"
+echo "http://127.0.0.1:\$COMFY_PORT"
+echo ""
+echo "Or run this command to open automatically:"
+echo "open http://127.0.0.1:\$COMFY_PORT"
 
 # Run ComfyUI from the temporary directory with the venv activated
 cd "\$TMP_DIR"
 export PYTHONPATH="\$PIP_VENV/lib/python3.12/site-packages:\$PYTHONPATH"
 echo "\033[1;32mStarting ComfyUI...\033[0m"
-echo "Once the server starts, you can access ComfyUI at: http://127.0.0.1:8188"
+echo "Once the server starts, you can access ComfyUI at: http://127.0.0.1:\$COMFY_PORT"
 echo "Press Ctrl+C to exit"
-exec ${pythonEnv}/bin/python "\$TMP_DIR/main.py" "\$@"
+exec ${pythonEnv}/bin/python "\$TMP_DIR/main.py" --port "\$COMFY_PORT" "\$@"
 EOF
 
             chmod +x $out/bin/comfy-ui-launcher
