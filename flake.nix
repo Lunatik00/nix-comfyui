@@ -20,25 +20,16 @@
         # Basic Python interpreter
         python = pkgs.python312;
         
-        # Custom derivations for the additional packages we need
-        comfyui-frontend-package = pkgs.python312Packages.buildPythonPackage rec {
-          pname = "comfyui-frontend-package";
-          version = "1.17.0";
-          format = "wheel";
-          
-          src = pkgs.fetchPypi {
-            inherit pname version format;
-            python = "py3";
-            platform = "any";
-            hash = "sha256-mKZXIaAA5Io09HdJvNCCF9H60NL4RlSWvVBj6rxQIzA=";
-          };
-          
-          propagatedBuildInputs = with pkgs.python312Packages; [
-            # Avoid torch dependencies to prevent version conflicts
-          ];
-          
-          doCheck = false;
+        # Custom derivation for ComfyUI including the frontend
+        comfyui-src = pkgs.fetchFromGitHub {
+          owner = "comfyanonymous";
+          repo = "ComfyUI";
+          rev = "7d4b529ace3cd56e1b4de02daa87fa6b8f6789e7"; # v0.3.28
+          hash = "sha256-Eoz4rOXk7R9QFgWdrmUyaI82lnvx2e2aL7znUXKP9QU=";
         };
+        
+        # The comfyui-frontend-package is now included directly from the repo
+        # So we don't need a separate derivation for it
         
         # PyAV package for audio/video processing
         python-av = pkgs.python312Packages.buildPythonPackage rec {
@@ -132,7 +123,6 @@
             jsonschema
             
             # Custom packages
-            comfyui-frontend-package
             python-av
             spandrel
           ];
@@ -144,12 +134,7 @@
           pname = "comfy-ui";
           version = "0.1.0";
           
-          src = pkgs.fetchFromGitHub {
-            owner = "comfyanonymous";
-            repo = "ComfyUI";
-            rev = "master"; # Consider pinning to a specific commit/tag for reproducibility
-            sha256 = "sha256-QTik5CjpvZsVwQtHkKVOV2D9QpwCtZcJipgPZbJGwFo=";
-          };
+          src = comfyui-src;
           
           nativeBuildInputs = [
             pkgs.makeWrapper
@@ -170,49 +155,43 @@
           
           installPhase = ''
             # Create directories
-            mkdir -p $out/bin
-            mkdir -p $out/share/comfy-ui
+            mkdir -p "$out/bin"
+            mkdir -p "$out/share/comfy-ui"
             
             # Copy ComfyUI files
-            cp -r ./* $out/share/comfy-ui/
+            cp -r ${comfyui-src}/* "$out/share/comfy-ui/"
             
             # Create a launcher script that sets up a writable environment
-            cat > $out/bin/comfy-ui-launcher << EOF
+            cat > "$out/bin/comfy-ui" << EOF
 #!/usr/bin/env bash
-set -e
 
-# Set up writable directories
+set -euo pipefail
+
+# Set user directory for ComfyUI
 USER_DIR="\$HOME/.config/comfy-ui"
-mkdir -p "\$USER_DIR"
-mkdir -p "\$USER_DIR/user"
-mkdir -p "\$USER_DIR/input"
-mkdir -p "\$USER_DIR/input/3d"
+if [ ! -d "\$USER_DIR" ]; then
+  mkdir -p "\$USER_DIR"
+  mkdir -p "\$USER_DIR/user"
+  mkdir -p "\$USER_DIR/input"
+  mkdir -p "\$USER_DIR/output"
+  mkdir -p "\$USER_DIR/models"
+fi
 
-# Create a fresh temporary directory to work in
-TMP_DIR=\$(mktemp -d)
-chmod 755 "\$TMP_DIR"
+# Create a temporary directory for ComfyUI
+TMP_DIR="\$(mktemp -d)"
+trap 'rm -rf "\$TMP_DIR"' EXIT
 
-# Copy ComfyUI files to the temporary directory with proper permissions
-cd "$out/share/comfy-ui"
-cp -r "$out/share/comfy-ui"/* "\$TMP_DIR"/
+# Copy ComfyUI to the temporary directory
+echo "Setting up ComfyUI environment..."
+cp -r "$out/share/comfy-ui"/* "\$TMP_DIR/"
 
-# Ensure everything in the temp directory is writable
-find "\$TMP_DIR" -type d -exec chmod 755 {} \;
-find "\$TMP_DIR" -type f -exec chmod 644 {} \;
-
-# Set up input and user directories
-mkdir -p "\$TMP_DIR/input"
-mkdir -p "\$TMP_DIR/input/3d"
-mkdir -p "\$TMP_DIR/user"
-
-# Remove the temporary directories and create symlinks to persistent storage
-rm -rf "\$TMP_DIR/user"
-rm -rf "\$TMP_DIR/input"
+# Set up symlinks to user directory
+ln -sf "\$USER_DIR/output" "\$TMP_DIR/output"
+ln -sf "\$USER_DIR/models" "\$TMP_DIR/models"
 ln -sf "\$USER_DIR/user" "\$TMP_DIR/user"
 ln -sf "\$USER_DIR/input" "\$TMP_DIR/input"
 
-# No longer need Python venv for additional packages as everything is handled by Nix
-echo "Using Nix-provided packages, no additional pip installation needed"
+echo "Using Nix-provided packages - no additional pip installation needed"
 
 # Set the ComfyUI port - hardcode it for predictability
 COMFY_PORT="8188"
