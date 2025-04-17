@@ -1,9 +1,12 @@
 // Patch for ComfyUI to use backend downloads instead of browser downloads
 // This script intercepts the download buttons in the missing models dialog
-// and redirects them to use our backend API
+// and redirects them to use our backend API with progress tracking
 
 (function() {
   console.log('[MODEL_DOWNLOADER] Frontend patch initializing...');
+
+  // Store active downloads
+  const activeDownloads = {};
 
   // Function to check if URL is from a trusted source
   function isTrustedSource(url) {
@@ -23,55 +26,328 @@
     }
   }
 
-  // Function to download model using backend API
-  async function downloadModelWithBackend(url, folder, filename) {
-    console.log(`[MODEL_DOWNLOADER] Downloading model: ${filename} to folder: ${folder} from URL: ${url}`);
-    
+  // Function to handle WebSocket messages for download progress
+  function handleWebSocketMessage(event) {
     try {
-      const response = await fetch('/api/download-model', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: url,
-          folder: folder,
-          filename: filename
-        }),
-      });
+      const message = JSON.parse(event.data);
       
-      console.log(`[MODEL_DOWNLOADER] Server response status: ${response.status}`);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server responded with ${response.status}: ${errorText}`);
-      }
-      
-      const result = await response.json();
-      console.log('[MODEL_DOWNLOADER] Download result:', result);
-      
-      if (result.success) {
-        console.log('[MODEL_DOWNLOADER] Model downloaded successfully!');
-        alert(`Model ${filename} downloaded successfully!`);
-        // Reload the workflow to use the newly downloaded model
-        if (typeof app !== 'undefined' && app.graphToPrompt) {
-          app.graphToPrompt();
-        } else {
-          console.error('[MODEL_DOWNLOADER] Cannot reload workflow: app or app.graphToPrompt is undefined');
-          // Try to reload the page as a fallback
-          window.location.reload();
+      // Check if this is a model download progress message
+      if (message.type === 'model_download_progress') {
+        console.log('[MODEL_DOWNLOADER] Progress update:', message);
+        
+        const downloadId = message.download_id;
+        if (activeDownloads[downloadId]) {
+          const download = activeDownloads[downloadId];
+          const { progressFill, progressText } = download;
+          
+          // Update the progress bar
+          progressFill.style.width = `${message.percent}%`;
+          
+          // Format the size nicely
+          const totalSizeMB = (message.total_size / (1024 * 1024)).toFixed(2);
+          const downloadedMB = (message.downloaded / (1024 * 1024)).toFixed(2);
+          
+          // Update the progress text based on status
+          if (message.status === 'downloading') {
+            progressText.textContent = `Downloading: ${downloadedMB} MB / ${totalSizeMB} MB (${message.percent.toFixed(1)}%)`;
+          } else if (message.status === 'completed') {
+            progressText.textContent = `Download complete: ${totalSizeMB} MB`;
+            progressFill.style.backgroundColor = '#2196F3'; // Blue for completion
+            
+            // After a delay, replace with a success message
+            setTimeout(() => {
+              if (download.progressContainer.parentNode) {
+                const successMessage = document.createElement('div');
+                successMessage.className = 'model-download-success';
+                successMessage.style.color = '#4CAF50';
+                successMessage.style.fontWeight = 'bold';
+                successMessage.style.padding = '10px';
+                successMessage.style.textAlign = 'center';
+                successMessage.textContent = `${message.filename} downloaded successfully!`;
+                
+                download.progressContainer.parentNode.replaceChild(successMessage, download.progressContainer);
+                
+                // Remove from active downloads
+                delete activeDownloads[downloadId];
+                
+                // Reload the workflow to use the newly downloaded model
+                if (typeof app !== 'undefined' && app.graphToPrompt) {
+                  setTimeout(() => {
+                    app.graphToPrompt();
+                  }, 1000);
+                }
+              }
+            }, 3000);
+          } else if (message.status === 'error') {
+            progressText.textContent = `Error: ${message.error || 'Unknown error'}`;
+            progressFill.style.backgroundColor = '#f44336'; // Red for error
+          }
         }
-      } else {
-        console.error('[MODEL_DOWNLOADER] Failed to download model:', result.error);
-        alert(`Failed to download model: ${result.error}`);
       }
     } catch (error) {
-      console.error('[MODEL_DOWNLOADER] Error downloading model:', error);
-      alert(`Error downloading model: ${error.message}`);
+      console.error('[MODEL_DOWNLOADER] Error handling WebSocket message:', error);
+    }
+  }
+    
+  // Function to set up WebSocket connection for progress updates
+  function setupWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    try {
+      // Check if ComfyUI already has a websocket connection we can use
+      if (window.app && window.app.api && window.app.api.socket) {
+        console.log('[MODEL_DOWNLOADER] Using existing ComfyUI WebSocket connection');
+        // Add our message handler to the existing socket
+        const originalOnMessage = window.app.api.socket.onmessage;
+        window.app.api.socket.onmessage = function(event) {
+          // Call the original handler
+          if (originalOnMessage) {
+            originalOnMessage.call(this, event);
+          }
+          // Call our handler
+          handleWebSocketMessage(event);
+        };
+      } else {
+        // Create our own WebSocket connection
+        console.log('[MODEL_DOWNLOADER] Creating new WebSocket connection to', wsUrl);
+        const socket = new WebSocket(wsUrl);
+        socket.onmessage = handleWebSocketMessage;
+        socket.onopen = () => console.log('[MODEL_DOWNLOADER] WebSocket connected');
+        socket.onerror = (error) => console.error('[MODEL_DOWNLOADER] WebSocket error:', error);
+        socket.onclose = () => console.log('[MODEL_DOWNLOADER] WebSocket disconnected');
+      }
+    } catch (error) {
+      console.error('[MODEL_DOWNLOADER] Error setting up WebSocket:', error);
     }
   }
 
-  // Function to patch download buttons in the missing models dialog
+  // Function to intercept download button clicks
+  function interceptDownloadButtons() {
+    console.log('[MODEL_DOWNLOADER] Intercepting download buttons...');
+    
+    // Find all buttons in the missing models dialog
+    const buttons = document.querySelectorAll('.p-dialog-content .p-button');
+    
+    buttons.forEach(button => {
+      // Check if this is a download button
+      if (button.textContent.includes('Download') || 
+          button.classList.contains('p-button-success') ||
+          button.getAttribute('aria-label')?.includes('download')) {
+          
+        console.log('[MODEL_DOWNLOADER] Found download button:', button);
+        
+        // Add our click handler
+        button.addEventListener('click', handleDownloadClick);
+      }
+    });
+  }
+
+    // Function to handle download button clicks
+    async function handleDownloadClick(event) {
+      // Prevent the default action
+      event.preventDefault();
+      event.stopPropagation();
+      
+      console.log('[MODEL_DOWNLOADER] Download button clicked');
+      
+      // Find the URL, folder, and filename from the dialog
+      const dialogContent = event.target.closest('.p-dialog-content');
+      if (!dialogContent) {
+        console.error('[MODEL_DOWNLOADER] Could not find dialog content');
+        return;
+      }
+      
+      // Find the URL from the button or nearby elements
+      let url = '';
+      let folder = '';
+      let filename = '';
+      
+      // Try to get the URL from the button's href or data attribute
+      if (event.target.href) {
+        url = event.target.href;
+      } else if (event.target.dataset.url) {
+        url = event.target.dataset.url;
+      } else if (event.target.getAttribute('href')) {
+        url = event.target.getAttribute('href');
+      }
+      
+      // If we couldn't find the URL directly, try to find it in the dialog content
+      if (!url) {
+        // Look for links in the dialog
+        const links = dialogContent.querySelectorAll('a');
+        for (const link of links) {
+          if (link.href && (link.href.includes('civitai.com') || link.href.includes('huggingface.co'))) {
+            url = link.href;
+            break;
+          }
+        }
+      }
+      
+      // Try to find the folder and filename from the dialog content
+      const text = dialogContent.textContent;
+      
+      // Extract folder from text like "Folder: checkpoints"
+      const folderMatch = text.match(/Folder:\s*([\w-]+)/);
+      if (folderMatch && folderMatch[1]) {
+        folder = folderMatch[1];
+      }
+      
+      // Extract filename from text like "Filename: v1-5-pruned-emaonly.safetensors"
+      const filenameMatch = text.match(/Filename:\s*([\w.-]+)/);
+      if (filenameMatch && filenameMatch[1]) {
+        filename = filenameMatch[1];
+      }
+      
+      // If we still don't have the filename, try to extract it from the URL
+      if (!filename && url) {
+        const urlParts = url.split('/');
+        filename = urlParts[urlParts.length - 1];
+      }
+      
+      console.log(`[MODEL_DOWNLOADER] URL: ${url}, Folder: ${folder}, Filename: ${filename}`);
+      
+      if (!url || !folder || !filename) {
+        console.error('[MODEL_DOWNLOADER] Missing required information for download');
+        return;
+      }
+      
+      // Create a progress element to replace the button
+      const button = event.target;
+      const buttonParent = button.parentElement;
+      
+      // Create a container for our progress display
+      const progressContainer = document.createElement('div');
+      progressContainer.className = 'model-download-progress';
+      progressContainer.style.width = '100%';
+      progressContainer.style.marginTop = '10px';
+      progressContainer.style.marginBottom = '10px';
+      
+      // Create the progress bar
+      const progressBar = document.createElement('div');
+      progressBar.className = 'model-download-progress-bar';
+      progressBar.style.width = '100%';
+      progressBar.style.height = '20px';
+      progressBar.style.backgroundColor = '#f0f0f0';
+      progressBar.style.borderRadius = '4px';
+      progressBar.style.overflow = 'hidden';
+      
+      // Create the progress fill
+      const progressFill = document.createElement('div');
+      progressFill.className = 'model-download-progress-fill';
+      progressFill.style.width = '0%';
+      progressFill.style.height = '100%';
+      progressFill.style.backgroundColor = '#4CAF50';
+      progressFill.style.transition = 'width 0.3s';
+      
+      // Create the progress text
+      const progressText = document.createElement('div');
+      progressText.className = 'model-download-progress-text';
+      progressText.style.textAlign = 'center';
+      progressText.style.marginTop = '5px';
+      progressText.style.fontSize = '14px';
+      progressText.textContent = 'Starting download...';
+      
+      // Add the elements to the container
+      progressBar.appendChild(progressFill);
+      progressContainer.appendChild(progressBar);
+      progressContainer.appendChild(progressText);
+      
+      // Replace the button with our progress container
+      buttonParent.replaceChild(progressContainer, button);
+      
+      // Make a request to our backend API to download the model
+      try {
+        const response = await fetch('/api/download-model', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            url,
+            folder,
+            filename
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          console.log('[MODEL_DOWNLOADER] Download started successfully, ID:', data.download_id);
+          
+          // Store the download info
+          activeDownloads[data.download_id] = {
+            progressFill,
+            progressText,
+            progressContainer,
+            filename,
+            folder
+          };
+        } else {
+          console.error('[MODEL_DOWNLOADER] Download failed:', data.error);
+          progressText.textContent = `Download failed: ${data.error}`;
+          progressFill.style.backgroundColor = '#f44336'; // Red for error
+        }
+      } catch (error) {
+        console.error('[MODEL_DOWNLOADER] Error starting download:', error);
+        progressText.textContent = `Error: ${error.message}`;
+        progressFill.style.backgroundColor = '#f44336'; // Red for error
+      }
+    }
+
+
+
+    // Function to patch download buttons in the missing models dialog
+    function patchMissingModelsDialog() {
+      console.log('[MODEL_DOWNLOADER] Setting up observer for missing models dialog...');
+      
+      // Watch for the missing models dialog to appear
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.addedNodes.length) {
+            for (const node of mutation.addedNodes) {
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                // Look for elements that might contain the missing models dialog
+                // The class name might vary depending on ComfyUI version
+                const dialog = node.querySelector('.missing-models-dialog') || 
+                              node.querySelector('.comfy-missing-models') || 
+                              node.querySelector('.p-dialog-content') || 
+                              (node.classList && (node.classList.contains('missing-models-dialog') || 
+                                                 node.classList.contains('p-dialog'))) ? node : null;
+                
+                if (dialog) {
+                  console.log('[MODEL_DOWNLOADER] Found potential dialog:', dialog);
+                  
+                  // Check if it's actually a missing models dialog by looking for text content
+                  if (dialog.textContent && dialog.textContent.includes('Missing Models')) {
+                    console.log('[MODEL_DOWNLOADER] Confirmed missing models dialog!');
+                    
+                    // Give a short delay to ensure all elements are rendered
+                    setTimeout(() => {
+                      interceptDownloadButtons();
+                      
+                      // Also try to find buttons in any child dialogs
+                      const childDialogs = dialog.querySelectorAll('.p-dialog-content, .dialog-content');
+                      childDialogs.forEach(childDialog => {
+                        console.log('[MODEL_DOWNLOADER] Found child dialog, patching buttons');
+                        interceptDownloadButtons();
+                      });
+                    }, 100);
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+      
+      // Start observing the document body for changes
+      observer.observe(document.body, { childList: true, subtree: true });
+      console.log('[MODEL_DOWNLOADER] Observer started');
+    }
+    
+
+  // Function to patch missing models dialog
   function patchMissingModelsDialog() {
     console.log('[MODEL_DOWNLOADER] Setting up observer for missing models dialog...');
     
@@ -84,8 +360,8 @@
               // Look for elements that might contain the missing models dialog
               // The class name might vary depending on ComfyUI version
               const dialog = node.querySelector('.missing-models-dialog') || 
-                            node.querySelector('.comfy-missing-models') ||
-                            node.querySelector('.p-dialog-content') ||
+                            node.querySelector('.comfy-missing-models') || 
+                            node.querySelector('.p-dialog-content') || 
                             (node.classList && (node.classList.contains('missing-models-dialog') || 
                                                node.classList.contains('p-dialog'))) ? node : null;
               
@@ -98,13 +374,13 @@
                   
                   // Give a short delay to ensure all elements are rendered
                   setTimeout(() => {
-                    patchDownloadButtons(dialog);
+                    interceptDownloadButtons();
                     
                     // Also try to find buttons in any child dialogs
                     const childDialogs = dialog.querySelectorAll('.p-dialog-content, .dialog-content');
                     childDialogs.forEach(childDialog => {
                       console.log('[MODEL_DOWNLOADER] Found child dialog, patching buttons');
-                      patchDownloadButtons(childDialog);
+                      interceptDownloadButtons();
                     });
                   }, 100);
                 }
@@ -119,190 +395,29 @@
     observer.observe(document.body, { childList: true, subtree: true });
     console.log('[MODEL_DOWNLOADER] Observer started');
   }
-  
-  // Function to patch download buttons
-  function patchDownloadButtons(dialog) {
-    console.log('[MODEL_DOWNLOADER] Looking for download buttons in dialog...');
+
+  // Main initialization function
+  function initModelDownloader() {
+    console.log('[MODEL_DOWNLOADER] Initializing model downloader patch...');
     
-    // Find all buttons in the dialog
-    const buttons = dialog.querySelectorAll('button');
-    console.log(`[MODEL_DOWNLOADER] Found ${buttons.length} buttons in dialog`);
+    // Setup WebSocket for progress updates
+    setupWebSocket();
     
-    buttons.forEach(button => {
-      // Check if this is a download button
-      if (button.textContent && button.textContent.includes('Download')) {
-        console.log('[MODEL_DOWNLOADER] Found download button:', button.textContent);
-        
-        // Try to find the model information
-        let url, folder, filename;
-        
-        // Get URL from title attribute (specific to the PrimeVue button structure)
-        url = button.getAttribute('title');
-        console.log('[MODEL_DOWNLOADER] Button title URL:', url);
-        
-        // Find the model info in the parent listbox option
-        const listItem = button.closest('li') || button.closest('.p-listbox-option');
-        if (listItem) {
-          // Look for the span with the model path
-          const modelPathSpan = listItem.querySelector('span[title]');
-          if (modelPathSpan) {
-            const modelPathText = modelPathSpan.textContent;
-            console.log('[MODEL_DOWNLOADER] Model path text:', modelPathText);
-            
-            // Parse the model path (format: "folder / filename")
-            const parts = modelPathText.split(' / ');
-            if (parts.length === 2) {
-              folder = parts[0].trim();
-              filename = parts[1].trim();
-              console.log(`[MODEL_DOWNLOADER] Parsed path: folder=${folder}, filename=${filename}`);
-            }
-          }
-        }
-        
-        // If we still don't have the info, try other methods
-        if (!url || !folder || !filename) {
-          // Try to extract from parent element text content
-          const parentElement = button.closest('.flex') || button.closest('.p-listbox-option');
-          if (parentElement) {
-            const text = parentElement.textContent;
-            console.log('[MODEL_DOWNLOADER] Parent text:', text);
-            
-            // Extract filename from text
-            const filenameMatch = text.match(/([\w-]+\.(safetensors|ckpt|pt|bin|pth))/);
-            if (filenameMatch) {
-              filename = filenameMatch[1];
-              console.log('[MODEL_DOWNLOADER] Extracted filename:', filename);
-            }
-            
-            // Try to determine folder from context
-            if (text.includes('checkpoint') || text.includes('checkpoints')) {
-              folder = 'checkpoints';
-            } else if (text.includes('vae')) {
-              folder = 'vae';
-            } else if (text.includes('lora')) {
-              folder = 'loras';
-            } else if (text.includes('embedding')) {
-              folder = 'embeddings';
-            } else if (text.includes('controlnet')) {
-              folder = 'controlnet';
-            } else if (text.includes('upscale')) {
-              folder = 'upscale_models';
-            }
-          }
-        }
-        
-        console.log(`[MODEL_DOWNLOADER] Final extracted data: filename=${filename}, folder=${folder}, url=${url}`);
-        
-        if (url && folder && filename) {
-          console.log(`[MODEL_DOWNLOADER] Button has data: ${filename} in ${folder} from ${url}`);
-          
-          // Create a completely new click handler that replaces the original
-          // This is more reliable than trying to modify the existing one
-          const newClickHandler = function(event) {
-            console.log('[MODEL_DOWNLOADER] Download button clicked');
-            event.preventDefault();
-            event.stopPropagation();
-            
-            if (isTrustedSource(url)) {
-              console.log('[MODEL_DOWNLOADER] Using backend download for', filename);
-              downloadModelWithBackend(url, folder, filename);
-              return false;
-            } else {
-              console.log('[MODEL_DOWNLOADER] URL not trusted, falling back to browser download');
-              return true; // Allow default behavior
-            }
-          };
-          
-          // Remove existing click handlers
-          const clonedButton = button.cloneNode(true);
-          button.parentNode.replaceChild(clonedButton, button);
-          
-          // Add our new click handler
-          clonedButton.addEventListener('click', newClickHandler, true);
-          
-          // Mark as patched
-          clonedButton.dataset.patched = 'true';
-          
-          console.log('[MODEL_DOWNLOADER] Button completely replaced with patched version');
-        } else {
-          console.log('[MODEL_DOWNLOADER] Button missing required data, using fallback method');
-          
-          // Fallback: Create a new button that completely replaces the original
-          const clonedButton = button.cloneNode(true);
-          button.parentNode.replaceChild(clonedButton, button);
-          
-          clonedButton.addEventListener('click', function(event) {
-            console.log('[MODEL_DOWNLOADER] Fallback button clicked');
-            
-            // Try to extract URL from the button or its attributes
-            let extractedUrl = clonedButton.getAttribute('title') || clonedButton.getAttribute('href');
-            
-            if (!extractedUrl) {
-              console.log('[MODEL_DOWNLOADER] No URL found, allowing default behavior');
-              return true;
-            }
-            
-            // Try to extract filename from URL
-            let extractedFilename = '';
-            let extractedFolder = '';
-            
-            // Extract filename from URL
-            const urlObj = new URL(extractedUrl);
-            const pathParts = urlObj.pathname.split('/');
-            extractedFilename = pathParts[pathParts.length - 1];
-            
-            // Clean up filename (remove query parameters)
-            if (extractedFilename.includes('?')) {
-              extractedFilename = extractedFilename.split('?')[0];
-            }
-            
-            // Try to determine folder from context
-            const parentText = clonedButton.closest('.flex') ? clonedButton.closest('.flex').textContent : '';
-            if (parentText.includes('checkpoint') || parentText.includes('checkpoints')) {
-              extractedFolder = 'checkpoints';
-            } else if (parentText.includes('vae')) {
-              extractedFolder = 'vae';
-            } else if (extractedFilename.includes('vae')) {
-              extractedFolder = 'vae';
-            } else {
-              extractedFolder = 'checkpoints'; // Default to checkpoints
-            }
-            
-            console.log(`[MODEL_DOWNLOADER] Fallback extracted: ${extractedFilename} in ${extractedFolder} from ${extractedUrl}`);
-            
-            if (isTrustedSource(extractedUrl) && extractedFolder && extractedFilename) {
-              downloadModelWithBackend(extractedUrl, extractedFolder, extractedFilename);
-              event.preventDefault();
-              event.stopPropagation();
-              return false;
-            }
-            
-            console.log('[MODEL_DOWNLOADER] Fallback extraction failed, allowing default behavior');
-            return true;
-          }, true);
-          
-          // Mark as patched
-          clonedButton.dataset.patched = 'true';
-          console.log('[MODEL_DOWNLOADER] Fallback button replacement complete');
-        }
-      }
-    });
-  }
-  
-  // Initialize the patch
-  console.log('[MODEL_DOWNLOADER] Starting patch initialization');
-  
-  // Wait for the DOM to be fully loaded
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', patchMissingModelsDialog);
-    console.log('[MODEL_DOWNLOADER] Waiting for DOMContentLoaded event');
-  } else {
+    // Initialize the dialog observer
     patchMissingModelsDialog();
-    console.log('[MODEL_DOWNLOADER] DOM already loaded, patching immediately');
+    
+    console.log('[MODEL_DOWNLOADER] Model downloader patch initialized');
   }
-  
-  console.log('[MODEL_DOWNLOADER] Frontend patch loaded successfully!');
+
+  // Start the initialization when the document is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initModelDownloader);
+  } else {
+    initModelDownloader();
+  }
+
+  console.log('[MODEL_DOWNLOADER] Frontend patch loaded');
 })();
 
 // Log that the patch has been loaded
-console.log("ComfyUI backend download patch loaded");
+console.log("ComfyUI backend download patch loaded with progress tracking");

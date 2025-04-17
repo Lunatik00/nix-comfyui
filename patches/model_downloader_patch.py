@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+import asyncio
 import requests
 import json
 import logging
@@ -7,8 +9,8 @@ import traceback
 from pathlib import Path
 import folder_paths
 from aiohttp import web
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
+from server import PromptServer
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -72,6 +74,9 @@ def download_model_to_correct_location(url, model_name, directory):
         logger.error(f"Error downloading model: {e}")
         return False
 
+# Store active downloads with their progress information
+active_downloads = {}
+
 # Define the download model endpoint
 async def download_model(request):
     """
@@ -101,24 +106,166 @@ async def download_model(request):
         
         print(f"[MODEL_DOWNLOADER] Downloading model to {full_path}")
         
-        # Create a thread pool executor to handle the download in the background
-        with ThreadPoolExecutor() as executor:
-            # Run the download in a separate thread to avoid blocking the event loop
-            future = executor.submit(download_model_to_correct_location, url, filename, folder)
-            success = future.result()
+        # Generate a unique download ID
+        download_id = f"{folder}_{filename}_{int(time.time())}"
         
-        if success:
-            print(f"[MODEL_DOWNLOADER] Model downloaded successfully to {full_path}")
-            return web.json_response({"success": True, "path": full_path})
-        else:
-            print(f"[MODEL_DOWNLOADER] Failed to download model to {full_path}")
-            return web.json_response({"success": False, "error": "Failed to download model"})
+        # Create a download entry
+        active_downloads[download_id] = {
+            'url': url,
+            'folder': folder,
+            'filename': filename,
+            'path': full_path,
+            'total_size': 0,
+            'downloaded': 0,
+            'percent': 0,
+            'status': 'starting',
+            'error': None
+        }
+        
+        # Start download in background task
+        PromptServer.instance.loop.create_task(download_file(download_id, url, full_path))
+        
+        # Return the download ID so the frontend can track progress
+        return web.json_response({
+            "success": True, 
+            "download_id": download_id,
+            "status": "started"
+        })
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        print(f"[MODEL_DOWNLOADER] Error downloading model: {str(e)}")
+        print(f"[MODEL_DOWNLOADER] Error starting model download: {str(e)}")
         print(f"[MODEL_DOWNLOADER] Error details: {error_details}")
         return web.json_response({"success": False, "error": str(e)})
+
+async def download_file(download_id, url, full_path):
+    """
+    Background task to download a file and update progress
+    """
+    try:
+        # Create the directory if it doesn't exist
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        
+        # Update status
+        active_downloads[download_id]['status'] = 'downloading'
+        
+        # Send initial progress update
+        await send_download_update(download_id)
+        
+        # Download the file
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            total_size = int(r.headers.get('content-length', 0))
+            active_downloads[download_id]['total_size'] = total_size
+            
+            downloaded = 0
+            last_update_time = time.time()
+            
+            with open(full_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        active_downloads[download_id]['downloaded'] = downloaded
+                        
+                        if total_size > 0:
+                            percent = (downloaded / total_size) * 100
+                            active_downloads[download_id]['percent'] = percent
+                            
+                            # Update progress every 0.5 seconds or every 5MB, whichever comes first
+                            current_time = time.time()
+                            if (current_time - last_update_time >= 0.5 or 
+                                downloaded % (5 * 1024 * 1024) < 8192):
+                                last_update_time = current_time
+                                await send_download_update(download_id)
+                                
+                                # Also log to console occasionally (every 10MB)
+                                if downloaded % (10 * 1024 * 1024) < 8192:
+                                    print(f"[MODEL_DOWNLOADER] Downloaded {downloaded / (1024 * 1024):.2f} MB of {total_size / (1024 * 1024):.2f} MB ({percent:.2f}%)")
+        
+        # Update status to completed
+        active_downloads[download_id]['status'] = 'completed'
+        await send_download_update(download_id)
+        
+        print(f"[MODEL_DOWNLOADER] Model downloaded successfully to {full_path}")
+        
+        # Keep the download in active_downloads for a while so the frontend can see it completed
+        # then remove it after 30 seconds
+        await asyncio.sleep(30)
+        if download_id in active_downloads:
+            del active_downloads[download_id]
+            
+    except Exception as e:
+        error_details = traceback.format_exc()
+        print(f"[MODEL_DOWNLOADER] Error downloading file: {e}")
+        print(f"[MODEL_DOWNLOADER] Error details: {error_details}")
+        
+        # Update status to error
+        if download_id in active_downloads:
+            active_downloads[download_id]['status'] = 'error'
+            active_downloads[download_id]['error'] = str(e)
+            await send_download_update(download_id)
+
+async def send_download_update(download_id):
+    """
+    Send a progress update via websocket
+    """
+    if download_id in active_downloads:
+        download_info = active_downloads[download_id]
+        
+        # Create a message to send
+        message = {
+            'type': 'model_download_progress',
+            'download_id': download_id,
+            'filename': download_info['filename'],
+            'folder': download_info['folder'],
+            'total_size': download_info['total_size'],
+            'downloaded': download_info['downloaded'],
+            'percent': download_info['percent'],
+            'status': download_info['status'],
+            'error': download_info['error']
+        }
+        
+        # Send the message to all connected clients
+        await PromptServer.instance.send_json(message)
+
+async def get_download_progress(request):
+    """
+    Get the progress of a download
+    """
+    try:
+        download_id = request.match_info.get('download_id')
+        
+        if download_id in active_downloads:
+            return web.json_response({
+                "success": True,
+                "download": active_downloads[download_id]
+            })
+        else:
+            return web.json_response({
+                "success": False,
+                "error": "Download not found"
+            })
+    except Exception as e:
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        })
+
+async def list_downloads(request):
+    """
+    List all active downloads
+    """
+    try:
+        return web.json_response({
+            "success": True,
+            "downloads": active_downloads
+        })
+    except Exception as e:
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        })
 
 def setup_js_api(app, *args, **kwargs):
     """
@@ -134,17 +281,14 @@ def setup_js_api(app, *args, **kwargs):
     print("[MODEL_DOWNLOADER] args:", args)
     print("[MODEL_DOWNLOADER] kwargs:", kwargs)
     
-    # Register the API endpoint
+    # Register the API endpoints
     try:
-        # Directly add the route to the app router
         app.router.add_post('/api/download-model', download_model)
-        
-        print("[MODEL_DOWNLOADER] API endpoint registered at /api/download-model")
-        print("[MODEL_DOWNLOADER] All registered routes:")
-        for route in app.router.routes():
-            print(f"[MODEL_DOWNLOADER]   {route}")
+        app.router.add_get('/api/download-progress/{download_id}', get_download_progress)
+        app.router.add_get('/api/downloads', list_downloads)
+        print("[MODEL_DOWNLOADER] API endpoints registered")
     except Exception as e:
-        print(f"[MODEL_DOWNLOADER] Error registering API endpoint: {e}")
+        print(f"[MODEL_DOWNLOADER] Error registering API endpoints: {e}")
         traceback.print_exc()
     
     # Log that the patch has been applied
