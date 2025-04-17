@@ -31,8 +31,19 @@
         # The comfyui-frontend-package is now included directly from the repo
         # So we don't need a separate derivation for it
         
-        # We're removing custom package derivations to simplify the approach
-        # The problematic nodes will be disabled in the launcher script
+        # Custom derivation for the ComfyUI frontend package
+        comfyui-frontend-package = pkgs.python312Packages.buildPythonPackage rec {
+          pname = "comfyui-frontend-package";
+          version = "1.17.0";
+          format = "wheel";
+          
+          src = pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/py3/c/comfyui_frontend_package/comfyui_frontend_package-1.17.0-py3-none-any.whl";
+            hash = "sha256-g6P84Vkh81SYHkxgsHHSHAgrxV4tIdzcZ1q/PX7rEZE=";
+          };
+          
+          doCheck = false;
+        };
         
         # For simplicity, let's disable the spandrel package that's causing issues
         # and disable the audio nodes that require it
@@ -72,7 +83,8 @@
             matplotlib
             jsonschema
             
-            # No custom packages needed anymore
+            # Include the ComfyUI frontend package
+            comfyui-frontend-package
           ];
           ignoreCollisions = true;
         };
@@ -110,7 +122,7 @@
             cp -r ${comfyui-src}/* "$out/share/comfy-ui/"
             
             # Create a launcher script that sets up a writable environment
-            cat > "$out/bin/comfy-ui" << EOF
+            cat > "$out/bin/comfy-ui-launcher" << EOF
 #!/usr/bin/env bash
 
 set -euo pipefail
@@ -125,19 +137,41 @@ if [ ! -d "\$USER_DIR" ]; then
   mkdir -p "\$USER_DIR/models"
 fi
 
-# Create a temporary directory for ComfyUI
-TMP_DIR="\$(mktemp -d)"
-trap 'rm -rf "\$TMP_DIR"' EXIT
+# Set up persistent directory structure
+BASE_DIR="\$HOME/.config/comfy-ui"
+CODE_DIR="\$BASE_DIR/app"
+echo "Setting up ComfyUI environment in \$BASE_DIR"
 
-# Copy ComfyUI to the temporary directory
-echo "Setting up ComfyUI environment..."
-cp -r "$out/share/comfy-ui"/* "\$TMP_DIR/"
+# Create directory structure if it doesn't exist
+mkdir -p "\$BASE_DIR"
+mkdir -p "\$CODE_DIR"
 
-# Set up symlinks to user directory
-ln -sf "\$USER_DIR/output" "\$TMP_DIR/output"
-ln -sf "\$USER_DIR/models" "\$TMP_DIR/models"
-ln -sf "\$USER_DIR/user" "\$TMP_DIR/user"
-ln -sf "\$USER_DIR/input" "\$TMP_DIR/input"
+# Only update the application code if it has changed
+if [ -f "\$CODE_DIR/VERSION" ] && [ "\$(cat "\$CODE_DIR/VERSION" 2>/dev/null)" = "0.3.28" ]; then
+  echo "ComfyUI 0.3.28 already installed in \$CODE_DIR"
+else
+  echo "Installing/updating ComfyUI 0.3.28 in \$CODE_DIR"
+  # Clear existing code directory to avoid conflicts with old versions
+  rm -rf "\$CODE_DIR"/*
+  # Copy ComfyUI files
+  cp -r "$out/share/comfy-ui"/* "\$CODE_DIR/"
+  # Mark the version
+  echo "0.3.28" > "\$CODE_DIR/VERSION"
+  # Ensure proper permissions
+  chmod -R u+rw "\$CODE_DIR"
+fi
+
+# Ensure user data directories exist
+mkdir -p "\$BASE_DIR/output"
+mkdir -p "\$BASE_DIR/models"
+mkdir -p "\$BASE_DIR/user"
+mkdir -p "\$BASE_DIR/input"
+
+# Set up symlinks within the app directory
+ln -sf "\$BASE_DIR/output" "\$CODE_DIR/output"
+ln -sf "\$BASE_DIR/models" "\$CODE_DIR/models"
+ln -sf "\$BASE_DIR/user" "\$CODE_DIR/user"
+ln -sf "\$BASE_DIR/input" "\$CODE_DIR/input"
 
 echo "Using Nix-provided packages - no additional pip installation needed"
 
@@ -145,17 +179,14 @@ echo "Using Nix-provided packages - no additional pip installation needed"
 echo "Disabling nodes that might cause dependency issues..."
 
 # Disable audio nodes
-if [ -f "\$TMP_DIR/comfy_extras/nodes_audio.py" ]; then
-  mv "\$TMP_DIR/comfy_extras/nodes_audio.py" "\$TMP_DIR/comfy_extras/nodes_audio.py.disabled"
+if [ -f "\$CODE_DIR/comfy_extras/nodes_audio.py" ]; then
+  mv "\$CODE_DIR/comfy_extras/nodes_audio.py" "\$CODE_DIR/comfy_extras/nodes_audio.py.disabled"
   echo "Audio nodes disabled to prevent errors due to missing dependencies."
 fi
 
-# Disable any nodes that might depend on spandrel
-if [ -d "\$TMP_DIR/comfy_extras" ]; then
-  # Create or modify a __disabled_modules__.txt file to list modules to skip
-  echo "nodes_audio" > "\$TMP_DIR/comfy_extras/__disabled_modules__.txt"
-  echo "Configured ComfyUI to skip problematic modules."
-fi
+# Create a disabled modules list
+echo "nodes_audio" > "\$CODE_DIR/comfy_extras/__disabled_modules__.txt"
+echo "Configured ComfyUI to skip problematic modules."
 
 # Set the ComfyUI port - hardcode it for predictability
 COMFY_PORT="8188"
@@ -223,13 +254,18 @@ echo ""
 echo "Or run this command to open automatically:"
 echo "open http://127.0.0.1:\$COMFY_PORT"
 
-# Run ComfyUI from the temporary directory with the venv activated
-cd "\$TMP_DIR"
-export PYTHONPATH="\$PIP_VENV/lib/python3.12/site-packages:\$PYTHONPATH"
+# Frontend package is now included in the Nix environment
+echo "ComfyUI frontend package is already included in the environment"
+
+# Run ComfyUI from the code directory
+cd "\$CODE_DIR"
 echo "\033[1;32mStarting ComfyUI...\033[0m"
 echo "Once the server starts, you can access ComfyUI at: http://127.0.0.1:\$COMFY_PORT"
 echo "Press Ctrl+C to exit"
-exec ${pythonEnv}/bin/python "\$TMP_DIR/main.py" --port "\$COMFY_PORT" "\$@"
+
+# Set Python path to include our code directory for custom packages
+export PYTHONPATH="\$CODE_DIR:\${PYTHONPATH:-}"
+exec ${pythonEnv}/bin/python "\$CODE_DIR/main.py" --port "\$COMFY_PORT" "\$@"
 EOF
 
             chmod +x $out/bin/comfy-ui-launcher
@@ -237,7 +273,7 @@ EOF
             # Create a symlink to the launcher
             ln -s $out/bin/comfy-ui-launcher $out/bin/comfy-ui
           '';
-          
+              
           meta = with pkgs.lib; {
             description = "ComfyUI with Python 3.12";
             homepage = "https://github.com/comfyanonymous/ComfyUI";
