@@ -276,8 +276,23 @@ echo "\033[1;32mStarting ComfyUI...\033[0m"
 echo "Once the server starts, you can access ComfyUI at: http://127.0.0.1:\$COMFY_PORT"
 echo "Press Ctrl+C to exit"
 
-# Enable audio nodes and make sure dependencies are available
+# Enable audio nodes and set environment variables for stable execution
 export COMFY_ENABLE_AUDIO_NODES=True
+
+# Memory management settings to improve stability with large models
+export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0  # Don't aggressively cache tensors
+export PYTORCH_MPS_ENABLE_SPECIALIZED_KERNELS=0  # Disable specialized kernels for better stability
+export PYTORCH_ENABLE_MPS_FALLBACK=1  # Enable CPU fallback for operations not supported by MPS
+export PYTORCH_MPS_DEBUG=0  # Disable debug for performance
+
+# Set lower precision for better memory usage
+export COMFY_FORCE_FP16=True
+
+# Memory management settings for tcmalloc to prevent crashes
+export MALLOC_CONF="background_thread:true,metadata_thp:auto,tcache:false"
+
+# Set Python garbage collection to be more aggressive
+export PYTHONMALLOC=malloc
 
 # Create a virtual environment for the extra packages if it doesn't exist
 COMFY_VENV="\$BASE_DIR/venv"
