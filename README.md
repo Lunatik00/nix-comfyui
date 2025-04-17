@@ -20,10 +20,10 @@ A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymo
 nix run
 
 # Run directly from GitHub without cloning the repository
-nix run github:jamesbrink/comfy-ui
+nix run github:jamesbrink/nix-comfyui
 
 # Run a specific version using the commit hash
-nix run github:jamesbrink/comfy-ui/[commit-hash]
+nix run github:jamesbrink/nix-comfyui/[commit-hash]
 ```
 
 ### Development Shell
@@ -38,7 +38,7 @@ nix develop
 You can install ComfyUI to your profile:
 
 ```bash
-nix profile install github:jamesbrink/comfy-ui
+nix profile install github:jamesbrink/nix-comfyui
 ```
 
 ## Customization
