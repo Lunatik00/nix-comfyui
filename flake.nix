@@ -20,8 +20,7 @@
         # Basic Python interpreter
         python = pkgs.python312;
         
-        # Simplified approach - only include the minimum necessary packages
-        # directly, and let ComfyUI use pip to install the rest
+        # Comprehensive Python environment with all required dependencies
         pythonEnv = pkgs.python312.buildEnv.override {
           extraLibs = with pkgs.python312Packages; [
             # Core Python tools
@@ -29,11 +28,32 @@
             setuptools
             wheel
             
-            # Only include a minimal set of packages to avoid collisions
-            # These are the absolute essentials ComfyUI will need to bootstrap
+            # ComfyUI dependencies
             numpy
             pillow
             requests
+            pyyaml
+            tqdm
+            aiohttp
+            yarl
+            scipy
+            psutil
+            typing-extensions
+            einops
+            torch-bin
+            torchvision-bin
+            torchaudio-bin
+            torchsde          # Found in nixpkgs
+            transformers
+            tokenizers
+            sentencepiece
+            safetensors
+            kornia
+            opencv4  # Nix equivalent of opencv-python
+            
+            # Additional dependencies that might be needed
+            matplotlib
+            jsonschema
           ];
           ignoreCollisions = true;
         };
@@ -73,31 +93,73 @@
             mkdir -p $out/share/comfy-ui
             
             # Copy ComfyUI files
-            cp -r $src/* $out/share/comfy-ui/
+            cp -r ./* $out/share/comfy-ui/
             
-            # Create requirements-nix.txt without torch-related packages
-            cat > $out/share/comfy-ui/requirements-nix.txt << EOL
-            pyyaml
-            tqdm
-            aiohttp
-            yarl
-            scipy
-            psutil
-            typing-extensions
-            einops
-            transformers
-            tokenizers
-            sentencepiece
-            safetensors
-            kornia
-            opencv-python
-            EOL
+            # Create a launcher script that sets up a writable environment
+            cat > $out/bin/comfy-ui-launcher << EOF
+#!/usr/bin/env bash
+set -e
+
+# Set up writable directories
+USER_DIR="\$HOME/.config/comfy-ui"
+mkdir -p "\$USER_DIR"
+mkdir -p "\$USER_DIR/user"
+
+# Create symbolic links for writable directories
+cd "$out/share/comfy-ui"
+TMP_DIR=\$(mktemp -d)
+cp -r "$out/share/comfy-ui"/* "\$TMP_DIR"/
+rm -rf "\$TMP_DIR/user" || true
+ln -sf "\$USER_DIR/user" "\$TMP_DIR/user"
+
+# Create and activate a Python venv for additional packages
+PIP_VENV="\$USER_DIR/venv"
+if [ ! -d "\$PIP_VENV" ]; then
+  echo "Creating virtual environment for additional packages at \$PIP_VENV"
+  ${pythonEnv}/bin/python -m venv "\$PIP_VENV"
+  echo "Installing required packages..."
+  "\$PIP_VENV/bin/pip" install comfyui-frontend-package spandrel av
+else
+  # Check if packages are installed and install them if needed
+  if ! "\$PIP_VENV/bin/pip" show spandrel &>/dev/null; then
+    echo "Installing missing package: spandrel"
+    "\$PIP_VENV/bin/pip" install spandrel
+  fi
+  if ! "\$PIP_VENV/bin/pip" show av &>/dev/null; then
+    echo "Installing missing package: av"
+    "\$PIP_VENV/bin/pip" install av
+  fi
+fi
+
+# Check if port 8188 is already in use
+if nc -z localhost 8188 2>/dev/null; then
+  echo "\033[1;33mPort 8188 is already in use!\033[0m"
+  echo "ComfyUI is likely already running. If you want to start a new instance, try:"
+  echo "  1. Check if ComfyUI is already running at http://127.0.0.1:8188"
+  echo "  2. Stop any running ComfyUI instances"
+  echo "  3. Run this command again"
+  echo ""
+  echo "Would you like to open ComfyUI in your browser? (assuming it's running)"
+  read -p "[Y/n]: " response
+  if [[ "\$response" != "n" && "\$response" != "N" ]]; then
+    open http://127.0.0.1:8188
+  fi
+  exit 0
+fi
+
+# Run ComfyUI from the temporary directory with the venv activated
+cd "\$TMP_DIR"
+export PYTHONPATH="\$PIP_VENV/lib/python3.12/site-packages:\$PYTHONPATH"
+echo "\033[1;32mStarting ComfyUI...\033[0m"
+echo "Once the server starts, you can access ComfyUI at: http://127.0.0.1:8188"
+echo "Press Ctrl+C to exit"
+exec ${pythonEnv}/bin/python "\$TMP_DIR/main.py" "\$@"
+EOF
+
+            chmod +x $out/bin/comfy-ui-launcher
             
-            # Create a wrapper script that sets up the environment and installs dependencies
-            makeWrapper ${pythonEnv}/bin/python $out/bin/comfy-ui \
-              --add-flags "$out/share/comfy-ui/main.py" \
-              --run "cd $out/share/comfy-ui && ${pythonEnv}/bin/pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 torchsde && ${pythonEnv}/bin/pip install -r requirements-nix.txt" \
-              --set PYTHONPATH "$out/share/comfy-ui:$PYTHONPATH"
+            # Create a symlink to the launcher
+            ln -s $out/bin/comfy-ui-launcher $out/bin/comfy-ui
           '';
           
           meta = with pkgs.lib; {
@@ -121,33 +183,13 @@
           
           shellHook = ''
             echo "ComfyUI development environment activated"
-            echo "Installing required dependencies..."
+            echo "All dependencies are included via Nix package manager"
             
-            # Create a minimal requirements file for pip installation
-            cat > requirements-nix.txt << EOL
-            torch==2.5.1
-            torchvision==0.20.1
-            torchaudio==2.5.1
-            torchsde
-            pyyaml
-            tqdm
-            aiohttp
-            yarl
-            scipy
-            psutil
-            typing-extensions
-            einops
-            transformers
-            tokenizers
-            sentencepiece
-            safetensors
-            kornia
-            opencv-python
-            EOL
+            # Set up a user directory
+            export COMFY_USER_DIR="$HOME/.config/comfy-ui"
+            mkdir -p "$COMFY_USER_DIR"
             
-            # Install dependencies via pip to avoid Nix collisions
-            pip install -r requirements-nix.txt
-            
+            echo "User data will be stored in $COMFY_USER_DIR"
             echo "Run 'python main.py' to start ComfyUI"
             export PYTHONPATH="$PWD:$PYTHONPATH"
           '';
