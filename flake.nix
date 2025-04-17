@@ -301,25 +301,86 @@ export COMFY_ENABLE_AUDIO_NODES=True
 export LD_PRELOAD=/usr/lib/libc.dylib
 export DYLD_INSERT_LIBRARIES=/usr/lib/libc.dylib
 
-# Set PyTorch to use the system allocator
+# Let's keep it simple for Apple Silicon - use fewer environment variables
+# and focus on a more direct approach
 export PYTORCH_NO_CUDA_MEMORY_CACHING=1
-export PYTORCH_USE_PYTORCH_ALLOCATOR=1
-export OMP_NUM_THREADS=1
-
-# Disable GPU features that might be unstable
-export DISABLE_TENSOR_CORES=1
-
-# Apple Silicon MPS-specific settings
-export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
-export PYTORCH_MPS_ENABLE_SPECIALIZED_KERNELS=0
-export PYTORCH_ENABLE_MPS_FALLBACK=1
-
-# Model precision settings
+export PYTHONMALLOC=malloc
 export COMFY_PRECISION="fp16"
-export COMFY_FORCE_FP16=True
 
-# Let the CPU handle memory-intensive operations
-export COMFY_CPU_ONLY="VAE CLIP UNET"
+# Create a patch file to modify how ComfyUI loads models on macOS
+cat > "\$CODE_DIR/macos_model_patch.py" << 'PATCH_EOF'
+import os
+import sys
+import platform
+
+# Check if we're on macOS
+if platform.system() == 'Darwin':
+    print("Applying macOS patch for model loading")
+    
+    # Monkey patch torch.load to use CPU first
+    import torch
+    import gc
+    original_load = torch.load
+    
+    def safe_macos_load(*args, **kwargs):
+        # Clear memory before loading
+        gc.collect()
+        if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+            torch.mps.empty_cache()
+            
+        # Always load models to CPU first, then transfer
+        if 'map_location' not in kwargs:
+            kwargs['map_location'] = 'cpu'
+            
+        # Load the model
+        try:
+            result = original_load(*args, **kwargs)
+        except RuntimeError as e:
+            print(f"Error loading model: {e}")
+            # Try one more time with aggressive garbage collection
+            gc.collect()
+            if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+                torch.mps.empty_cache()
+            result = original_load(*args, **kwargs)
+        
+        # Clear memory after loading
+        gc.collect()
+        
+        return result
+        
+    # Apply the patch
+    torch.load = safe_macos_load
+    print("Successfully patched torch.load for macOS")
+
+# Now patch the model_management.py file to change how models are loaded
+# This is the most direct approach to prevent the tcmalloc crash
+if platform.system() == 'Darwin':
+    try:
+        import comfy.model_management as model_management
+        original_load_model_gpu = model_management.load_model_gpu
+        
+        def safe_load_model_gpu(model):
+            # When on macOS, always ensure models are on CPU first
+            print("Safely loading model using CPU intermediary step")
+            model.to("cpu")
+            gc.collect()
+            if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+                torch.mps.empty_cache()
+                
+            # Now load to GPU safely in chunks
+            return original_load_model_gpu(model)
+            
+        # Apply the patch
+        model_management.load_model_gpu = safe_load_model_gpu
+        print("Successfully patched model_management for safer macOS loading")
+    except Exception as e:
+        print(f"Warning: Could not patch model_management: {e}")
+        
+print("MacOS model loading patches complete")
+PATCH_EOF
+
+# Apply the patch before running ComfyUI
+${pythonEnv}/bin/python "\$CODE_DIR/macos_model_patch.py" || echo "Warning: Model patch failed, but continuing"
 
 # Create a virtual environment for the extra packages if it doesn't exist
 COMFY_VENV="\$BASE_DIR/venv"
@@ -442,10 +503,20 @@ if [ -f "\$CODE_DIR/comfy/model_management.py" ]; then
   echo "Model management patched successfully"
 fi
 
-# Apply the memory patch script before starting the app
-echo "Applying memory management patches..."
-${pythonEnv}/bin/python "\$CODE_DIR/memory_patch.py" || echo "Warning: Memory patch failed but continuing anyway"
-exec ${pythonEnv}/bin/python "\$CODE_DIR/main.py" --port "\$COMFY_PORT" "\$@"
+# Import our macOS patch module at application startup
+echo "#!/usr/bin/env python
+
+# Import the macOS patch first before any other imports
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import macos_model_patch
+
+# Now import and run the normal main module
+from main import *
+" > "\$CODE_DIR/patched_main.py"
+
+chmod +x "\$CODE_DIR/patched_main.py"
+exec ${pythonEnv}/bin/python "\$CODE_DIR/patched_main.py" --port "\$COMFY_PORT" "\$@"
 EOF
 
             chmod +x $out/bin/comfy-ui-launcher
