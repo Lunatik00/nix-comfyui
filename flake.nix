@@ -68,13 +68,13 @@
         spandrel = pkgs.python312Packages.buildPythonPackage rec {
           pname = "spandrel";
           version = "0.4.1";
-          format = "wheel";
+          format = "setuptools";
           
-          src = pkgs.fetchPypi {
-            inherit pname version format;
-            python = "py3";
-            platform = "any";
-            hash = "sha256-tDZCXihEgDtDgO8UeK1wInjmpLU7B3WsUcfsMWlBP64=";
+          src = pkgs.fetchFromGitHub {
+            owner = "chaiNNer-org";
+            repo = "spandrel";
+            rev = "v${version}";
+            hash = "sha256-+nLdrRmJYXmYL32hGdZ4VQ3mPlkQXw+VFCHIgNSKf3E=";
           };
           
           propagatedBuildInputs = with pkgs.python312Packages; [
@@ -85,6 +85,7 @@
             einops
           ];
           
+          # Don't run tests since they require network access
           doCheck = false;
         };
         
