@@ -74,7 +74,7 @@
             owner = "chaiNNer-org";
             repo = "spandrel";
             rev = "v${version}";
-            hash = "sha256-+nLdrRmJYXmYL32hGdZ4VQ3mPlkQXw+VFCHIgNSKf3E=";
+            hash = "sha256-saRSosJ/pXmhLX5VqK3IBwT1yo14kD4nwNw0bCT2o5w=";
           };
           
           propagatedBuildInputs = with pkgs.python312Packages; [
