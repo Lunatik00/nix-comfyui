@@ -25,7 +25,7 @@
           owner = "comfyanonymous";
           repo = "ComfyUI";
           rev = "a14c2fc3565277dfe8ab0ecb22a86c1d0a1f72cf"; # v0.3.28
-          sha256 = "sha256-nkc5+4QDlAAxgBAf9VrHvTzAbx5vgxV5uPdL/r+kKjs="; # Will need to be updated
+          hash = "sha256-d+RxxBmkwuZwRvPfdHGjZ7pllvbIcoITn9Z/1k3m4KE=";
         };
         
         # The comfyui-frontend-package is now included directly from the repo
