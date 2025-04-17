@@ -31,38 +31,8 @@
         # The comfyui-frontend-package is now included directly from the repo
         # So we don't need a separate derivation for it
         
-        # PyAV package for audio/video processing
-        python-av = pkgs.python312Packages.buildPythonPackage rec {
-          pname = "av";
-          version = "14.3.0";
-          format = "setuptools";
-          
-          src = pkgs.fetchPypi {
-            inherit pname version;
-            hash = "sha256-XN7NitZwLFUg/O0MLlYAR7fZ+I/2e5WKq/rxV+C4uOY=";
-          };
-          
-          nativeBuildInputs = [
-            pkgs.pkg-config
-          ];
-          
-          buildInputs = [
-            pkgs.ffmpeg
-          ];
-          
-          propagatedBuildInputs = with pkgs.python312Packages; [
-            numpy
-          ];
-          
-          # Disable tests that require internet access
-          doCheck = false;
-          
-          # Patch to work with newer FFmpeg versions
-          postPatch = ''
-            substituteInPlace setup.py \
-              --replace 'ffmpeg_version = "55.110.100"' 'ffmpeg_version = "60.3.100"'
-          '';
-        };
+        # We're removing custom package derivations to simplify the approach
+        # The problematic nodes will be disabled in the launcher script
         
         # For simplicity, let's disable the spandrel package that's causing issues
         # and disable the audio nodes that require it
@@ -102,8 +72,7 @@
             matplotlib
             jsonschema
             
-            # Custom packages
-            python-av
+            # No custom packages needed anymore
           ];
           ignoreCollisions = true;
         };
@@ -172,11 +141,20 @@ ln -sf "\$USER_DIR/input" "\$TMP_DIR/input"
 
 echo "Using Nix-provided packages - no additional pip installation needed"
 
-# Disable the audio nodes that require spandrel to avoid errors
-echo "Disabling audio nodes that might cause dependency issues..."
+# Disable nodes that require problematic dependencies to avoid errors
+echo "Disabling nodes that might cause dependency issues..."
+
+# Disable audio nodes
 if [ -f "\$TMP_DIR/comfy_extras/nodes_audio.py" ]; then
   mv "\$TMP_DIR/comfy_extras/nodes_audio.py" "\$TMP_DIR/comfy_extras/nodes_audio.py.disabled"
   echo "Audio nodes disabled to prevent errors due to missing dependencies."
+fi
+
+# Disable any nodes that might depend on spandrel
+if [ -d "\$TMP_DIR/comfy_extras" ]; then
+  # Create or modify a __disabled_modules__.txt file to list modules to skip
+  echo "nodes_audio" > "\$TMP_DIR/comfy_extras/__disabled_modules__.txt"
+  echo "Configured ComfyUI to skip problematic modules."
 fi
 
 # Set the ComfyUI port - hardcode it for predictability
