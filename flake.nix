@@ -349,10 +349,15 @@ fi
 VENV_SITE_PACKAGES="\$COMFY_VENV/lib/python3.12/site-packages"
 export PYTHONPATH="\$CODE_DIR:\$VENV_SITE_PACKAGES:\${PYTHONPATH:-}"
 
-# Create an additional script to patch ComfyUI's memory handling
-cat > "\$CODE_DIR/memory_patch.py" << 'EOF'
+# Create memory patch script in the persistent directory after it's set up
+MEMORY_PATCH_SCRIPT="\$CODE_DIR/memory_patch.py"
+cat > "\$MEMORY_PATCH_SCRIPT" << EOF
 import torch
 import gc
+import os
+
+# Set up aggressive garbage collection
+gc.set_threshold(100, 5, 5)
 
 # Monkey patch torch.load to add garbage collection
 original_load = torch.load
@@ -373,8 +378,9 @@ torch.load = patched_load
 print("Memory management patches applied successfully")
 EOF
 
-# Run the patch script before starting the main application
-${pythonEnv}/bin/python "\$CODE_DIR/memory_patch.py"
+# Apply memory management patch before starting the main app
+echo "Applying memory management patches..."
+${pythonEnv}/bin/python "\$MEMORY_PATCH_SCRIPT" || echo "Warning: Memory patch failed but continuing anyway"
 exec ${pythonEnv}/bin/python "\$CODE_DIR/main.py" --port "\$COMFY_PORT" "\$@"
 EOF
 
