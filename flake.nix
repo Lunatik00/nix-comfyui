@@ -20,11 +20,79 @@
         # Basic Python interpreter
         python = pkgs.python312;
         
+        # Custom derivations for the additional packages we need
+        comfyui-frontend-package = pkgs.python312Packages.buildPythonPackage rec {
+          pname = "comfyui-frontend-package";
+          version = "1.17.0";
+          format = "wheel";
+          
+          src = pkgs.fetchPypi {
+            inherit pname version format;
+            python = "py3";
+            platform = "any";
+            hash = "sha256-mKZXIaAA5Io09HdJvNCCF9H60NL4RlSWvVBj6rxQIzA=";
+          };
+          
+          propagatedBuildInputs = with pkgs.python312Packages; [
+            # Avoid torch dependencies to prevent version conflicts
+          ];
+          
+          doCheck = false;
+        };
+        
+        # PyAV package for audio/video processing
+        python-av = pkgs.python312Packages.buildPythonPackage rec {
+          pname = "av";
+          version = "14.3.0";
+          format = "wheel";
+          
+          src = pkgs.fetchPypi {
+            inherit pname version format;
+            python = "cp312";
+            abi = "cp312";
+            platform = "macosx_12_0_arm64";
+            hash = "sha256-3Q36APPHqC/4H9pNY+TIXknLJ3h2v2iYXw9wC1Qy8b0=";
+          };
+          
+          buildInputs = [
+            pkgs.ffmpeg
+          ];
+          
+          propagatedBuildInputs = with pkgs.python312Packages; [
+            numpy
+          ];
+          
+          doCheck = false;
+        };
+        
+        # Spandrel package for model loading
+        spandrel = pkgs.python312Packages.buildPythonPackage rec {
+          pname = "spandrel";
+          version = "0.4.1";
+          format = "wheel";
+          
+          src = pkgs.fetchPypi {
+            inherit pname version format;
+            python = "py3";
+            platform = "any";
+            hash = "sha256-tDZCXihEgDtDgO8UeK1wInjmpLU7B3WsUcfsMWlBP64=";
+          };
+          
+          propagatedBuildInputs = with pkgs.python312Packages; [
+            torch-bin
+            torchvision-bin
+            numpy
+            safetensors
+            einops
+          ];
+          
+          doCheck = false;
+        };
+        
         # Comprehensive Python environment with all required dependencies
         pythonEnv = pkgs.python312.buildEnv.override {
           extraLibs = with pkgs.python312Packages; [
             # Core Python tools
-            pip
             setuptools
             wheel
             
@@ -43,7 +111,7 @@
             torch-bin
             torchvision-bin
             torchaudio-bin
-            torchsde          # Found in nixpkgs
+            torchsde
             transformers
             tokenizers
             sentencepiece
@@ -54,6 +122,11 @@
             # Additional dependencies that might be needed
             matplotlib
             jsonschema
+            
+            # Custom packages
+            comfyui-frontend-package
+            python-av
+            spandrel
           ];
           ignoreCollisions = true;
         };
@@ -130,33 +203,8 @@ rm -rf "\$TMP_DIR/input"
 ln -sf "\$USER_DIR/user" "\$TMP_DIR/user"
 ln -sf "\$USER_DIR/input" "\$TMP_DIR/input"
 
-# Create and activate a Python venv for additional packages
-PIP_VENV="\$USER_DIR/venv"
-if [ ! -d "\$PIP_VENV" ]; then
-  echo "Creating virtual environment for additional packages at \$PIP_VENV"
-  ${pythonEnv}/bin/python -m venv "\$PIP_VENV"
-  echo "Installing required packages..."
-  # Only install non-torch packages through pip to avoid version conflicts
-  "\$PIP_VENV/bin/pip" install comfyui-frontend-package spandrel av
-else
-  # Check if packages are installed and install them if needed
-  if ! "\$PIP_VENV/bin/pip" show spandrel &>/dev/null; then
-    echo "Installing missing package: spandrel"
-    "\$PIP_VENV/bin/pip" install spandrel
-  fi
-  if ! "\$PIP_VENV/bin/pip" show av &>/dev/null; then
-    echo "Installing missing package: av"
-    "\$PIP_VENV/bin/pip" install av
-  fi
-  if ! "\$PIP_VENV/bin/pip" show comfyui-frontend-package &>/dev/null; then
-    echo "Installing missing package: comfyui-frontend-package"
-    "\$PIP_VENV/bin/pip" install comfyui-frontend-package
-  fi
-fi
-
-# Install the packages into the temporary ComfyUI directory to ensure they're found
-echo "Ensuring dependencies are available in the ComfyUI environment..."
-cp -r "\$PIP_VENV/lib/python3.12/site-packages/"* "\$TMP_DIR/"
+# No longer need Python venv for additional packages as everything is handled by Nix
+echo "Using Nix-provided packages, no additional pip installation needed"
 
 # Set the ComfyUI port - hardcode it for predictability
 COMFY_PORT="8188"
