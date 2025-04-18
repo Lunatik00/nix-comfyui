@@ -38,8 +38,8 @@ mkdir -p "$CODE_DIR"
 cp -r "@comfyuiSrc@"/* "$CODE_DIR/"
 echo "$COMFY_VERSION" > "$CODE_DIR/VERSION"
 
-# Copy our persistent main script
-cp -f "$(dirname "$0")/../persistent_main.py" "$CODE_DIR/" 2>/dev/null || true
+# Copy our persistence scripts
+cp -f "@persistenceMainScript@" "$CODE_DIR/persistent_main.py" 2>/dev/null || true
 
 chmod -R u+rw "$CODE_DIR"
 
@@ -117,18 +117,12 @@ if [ ! -d "$COMFY_VENV" ]; then
   "$COMFY_VENV/bin/pip" install requests
 fi
 
-# Copy path override module from repo to ensure directory paths are persistent
-PATH_OVERRIDE_DIR="$(dirname "$0")/../custom_nodes/path_override"
-if [ -d "$PATH_OVERRIDE_DIR" ]; then
-  echo "Installing path override module"
-  mkdir -p "$CODE_DIR/custom_nodes/path_override"
-  cp -f "$PATH_OVERRIDE_DIR/path_override.py" "$CODE_DIR/custom_nodes/path_override/path_override.py"
-  cp -f "$PATH_OVERRIDE_DIR/__init__.py" "$CODE_DIR/custom_nodes/path_override/__init__.py"
-fi
-
-# Copy our persistence script to ensure directory paths are persistent
+# We use persistent.py for path management, no need for the path_override custom node
+# Copy our persistence scripts to ensure directory paths are persistent
 cp -f "@persistenceScript@" "$CODE_DIR/persistent.py" 2>/dev/null || true
+cp -f "@persistenceMainScript@" "$CODE_DIR/persistent_main.py" 2>/dev/null || true
 chmod +x "$CODE_DIR/persistent.py"
+chmod +x "$CODE_DIR/persistent_main.py"
 
 # Create a more direct approach to inject our frontend patch
 # First, let's find where the frontend package is installed
@@ -237,15 +231,7 @@ export COMFY_USER_DIR="$BASE_DIR"
 # Explicitly point to the user directory where workflows are saved
 export COMFY_SAVE_PATH="$BASE_DIR/user"
 
-# Ensure path_override module exists in the persistent directory
-if [ -d "$(dirname "$0")/../custom_nodes/path_override" ]; then
-  mkdir -p "$BASE_DIR/custom_nodes/path_override"
-  if [ ! -f "$BASE_DIR/custom_nodes/path_override/path_override.py" ]; then
-    echo "Installing path_override module to persistent directory"
-    cp -f "$(dirname "$0")/../custom_nodes/path_override/path_override.py" "$BASE_DIR/custom_nodes/path_override/path_override.py"
-    cp -f "$(dirname "$0")/../custom_nodes/path_override/__init__.py" "$BASE_DIR/custom_nodes/path_override/__init__.py"
-  fi
-fi
+# We use persistent.py for path management, no need for the path_override custom node
 
 # Parse arguments for our launcher
 ARGS=()
@@ -274,10 +260,8 @@ if [ "$OPEN_BROWSER" = true ]; then
   # Set up a trap to kill the child process when this script receives a signal
   trap 'kill $PID 2>/dev/null' INT TERM
   
-    # First run the persistence script to set up symlinks
-  "$COMFY_VENV/bin/python" "$CODE_DIR/persistent.py"
-  # Start ComfyUI in the background
-  "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}" &
+  # Start ComfyUI in the background using our persistent_main.py wrapper
+  "$COMFY_VENV/bin/python" "$CODE_DIR/persistent_main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}" &
   PID=$!
   
   # Wait for server to start
@@ -303,8 +287,7 @@ if [ "$OPEN_BROWSER" = true ]; then
   kill $PID 2>/dev/null || true
   exit 0
 else
-    # First run the persistence script to set up symlinks
-  "$COMFY_VENV/bin/python" "$CODE_DIR/persistent.py"
-  # Start ComfyUI normally
-  exec "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}"
+  # Start ComfyUI normally using our persistent_main.py wrapper
+  # This will run the persistence setup once before starting ComfyUI
+  exec "$COMFY_VENV/bin/python" "$CODE_DIR/persistent_main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}"
 fi

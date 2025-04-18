@@ -55,8 +55,9 @@
         };
         
         # Create launcher script with substituted variables
-        # Copy our persistence script to the nix store
-        persistenceScript = ./persistent.py;
+        # Copy our persistence scripts to the nix store
+        persistenceScript = ./src/persistence/persistence.py;
+        persistenceMainScript = ./src/persistence/main.py;
         
         launcherScript = pkgs.substituteAll {
           src = ./scripts/launcher.sh;
@@ -64,6 +65,7 @@
           comfyuiSrc = comfyui-src;
           modelDownloaderDir = modelDownloaderDir;
           persistenceScript = persistenceScript;
+          persistenceMainScript = persistenceMainScript;
         };
         
         packages.default = pkgs.stdenv.mkDerivation {

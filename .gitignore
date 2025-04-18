@@ -4,7 +4,12 @@ result-*
 .direnv/
 .devenv/
 /result
-/src/
+
+# Source reference directories
+/src/comfyui
+/src/comfyui-manager
+/src/comfyui-frontend
+/src/comfyui-workflow-templates
 
 # Python
 __pycache__/
