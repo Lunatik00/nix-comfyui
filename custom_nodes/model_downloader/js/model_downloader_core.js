@@ -2,6 +2,17 @@
 // This file contains the core functionality for downloading models
 
 (function() {
+  // Check if this module is already loaded, but don't skip core functionality
+  // We need the patching to work even with duplicates
+  if (window.modelDownloaderCoreLoaded) {
+    // If the core is already loaded, just make sure the button patching function is still executed
+    if (typeof window.modelDownloader?.patchMissingModelButtons === 'function') {
+      window.modelDownloader.patchMissingModelButtons();
+      return;
+    }
+  }
+  window.modelDownloaderCoreLoaded = true;
+
   // Map to store active downloads
   const activeDownloads = {};
   
@@ -26,55 +37,418 @@
     }
   }
   
-  // Function to download model using backend API
-  async function downloadModelWithBackend(url, folder, filename) {
-    console.log(`[MODEL_DOWNLOADER] Downloading model: ${filename} to folder: ${folder} from URL: ${url}`);
+  // Register message handler for the download progress immediately
+  // Important: This needs to be done before any downloads start
+  function registerMessageHandlers() {
+    // Try multiple ways to register the message handler
+    try {
+      if (window.api && typeof window.api.registerExtension === 'function') {
+        // Register with ComfyUI API extension system
+        window.api.registerExtension({
+          name: "model_downloader",
+          // Register our custom message type
+          init() {
+            api.addEventListener("model_download_progress", function(data) {
+              handleMessageEvent(data);
+            });
+          }
+        });
+      } 
+      // ComfyUI might use a different registration mechanism in different versions
+      else if (window.app && typeof window.app.registerMessageHandler === 'function') {
+        // Register with ComfyUI app.registerMessageHandler
+        window.app.registerMessageHandler('model_download_progress', handleMessageEvent);
+      }
+      // Legacy way - directly attach to WebSocket if API extensions are not available
+      else if (window.app && window.app.socket && window.app.socket instanceof WebSocket) {
+        // Using direct WebSocket approach
+        const originalSocketOnMessage = window.app.socket.onmessage;
+        window.app.socket.onmessage = function(event) {
+          // First call the original handler
+          if (originalSocketOnMessage) {
+            originalSocketOnMessage.call(this, event);
+          }
+          
+          // Then process for our own purposes
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === 'model_download_progress') {
+              handleMessageEvent(message);
+            }
+          } catch (e) {
+            // Ignore errors in our handler
+          }
+        };
+      }
+      // If ComfyUI socket is in the custom API
+      else if (window.app && window.app.api && window.app.api.socket && window.app.api.socket instanceof WebSocket) {
+        // Using api.socket approach
+        const originalSocketOnMessage = window.app.api.socket.onmessage;
+        window.app.api.socket.onmessage = function(event) {
+          // First call the original handler
+          if (originalSocketOnMessage) {
+            originalSocketOnMessage.call(this, event);
+          }
+          
+          // Then process for our own purposes
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === 'model_download_progress') {
+              handleMessageEvent(message);
+            }
+          } catch (e) {
+            // Ignore errors in our handler
+          }
+        };
+      }
+      
+      // Also register custom event listener
+      if (window.app && typeof window.app.addEventListener === 'function') {
+        console.log('[MODEL_DOWNLOADER] Adding event listener to app');
+        window.app.addEventListener('model_download_progress', handleMessageEvent);
+      }
+    } catch (error) {
+      console.error('[MODEL_DOWNLOADER] Error registering message handler:', error);
+    }
+  }
+  
+  // Handle incoming WebSocket messages for our download progress
+  function handleMessageEvent(event) {
+    try {
+      // Extract data from the event (different ComfyUI versions may structure this differently)
+      let messageData = event.data || event;
+      
+      // If this is a wrapper message with a type and data property (standard format)
+      if (messageData && messageData.type === 'model_download_progress' && messageData.data) {
+        messageData = messageData.data;
+      }
+      
+      // Handle CustomEvent format used by addEventListener
+      if (messageData && messageData.detail) {
+        if (messageData.detail.data) {
+          // Event comes as {detail: {type: 'model_download_progress', data: {...}}}
+          messageData = messageData.detail.data;
+        } else {
+          // Event comes as {detail: {download_id: '...', status: '...'}}
+          messageData = messageData.detail;
+        }
+      }
+      
+      if (messageData && messageData.download_id && window.modelDownloader) {
+        // Process download update
+        
+        // Create array to store all matched buttons
+        let matchedButtons = [];
+        let downloadData = null;
+        
+        // Only search active downloads if they exist
+        if (window.modelDownloader.activeDownloads) {
+          // Look for the download by server download ID
+          downloadData = window.modelDownloader.activeDownloads[messageData.download_id];
+          
+          // If not found directly, check all active downloads for a matching server_download_id
+          if (!downloadData) {
+            Object.values(window.modelDownloader.activeDownloads).forEach(download => {
+              if (download.server_download_id === messageData.download_id) {
+                downloadData = download;
+              }
+            });
+          }
+          
+          // If we found download data with a button, add it to matches
+          if (downloadData && downloadData.button) {
+            matchedButtons.push(downloadData.button);
+          }
+        }
+        
+        // Search for button by data attribute as a backup
+        if (document.querySelector) {
+          const buttonByAttribute = document.querySelector(`button[data-download-id="${messageData.download_id}"]`);
+          if (buttonByAttribute) {
+            matchedButtons.push(buttonByAttribute);
+          }
+        }
+        
+        // Search through all buttons for any with metadata that might match
+        if (document.querySelectorAll) {
+          const allButtons = document.querySelectorAll('button[data-model-downloader-patched="true"]');
+          for (const btn of allButtons) {
+            const folder = btn.getAttribute('data-folder-name');
+            const filename = btn.getAttribute('data-file-name');
+            
+            if (folder && filename && messageData.folder && messageData.filename) {
+              // Check if this button's metadata matches the download metadata
+              if (folder === messageData.folder && filename === messageData.filename) {
+                matchedButtons.push(btn);
+              }
+            }
+          }
+        }
+        
+        // Update all matched buttons
+        if (matchedButtons.length > 0) {
+          matchedButtons.forEach(button => {
+            // If message contains total_size, store it on the button for later
+            if (messageData.total_size) {
+              button.setAttribute('data-total-size', messageData.total_size);
+            }
+            
+            if (messageData.status === 'completed') {
+              updateButtonStatus(button, 'completed');
+              // Update status in activeDownloads tracking
+              if (downloadData) {
+                downloadData.status = 'completed';
+              }
+              // Check if all downloads are complete to close the dialog
+              checkAndCloseDialog();
+            } else if (messageData.status === 'error') {
+              updateButtonStatus(button, 'error', messageData.error);
+              // Update status in activeDownloads tracking
+              if (downloadData) {
+                downloadData.status = 'error';
+              }
+              // Check if all downloads are complete to close the dialog
+              checkAndCloseDialog();
+            }
+          });
+        } else {
+          // Store status for later if no button found
+          if (messageData.status === 'completed' || messageData.status === 'error') {
+            // Store in cache for later use
+            if (!window.modelDownloader.completedDownloads) {
+              window.modelDownloader.completedDownloads = {};
+            }
+            window.modelDownloader.completedDownloads[messageData.download_id] = messageData;
+            
+            // Update status in activeDownloads if we can find it
+            if (window.modelDownloader.activeDownloads && 
+                window.modelDownloader.activeDownloads[messageData.download_id]) {
+              window.modelDownloader.activeDownloads[messageData.download_id].status = messageData.status;
+              // Check if all downloads are complete to close the dialog
+              checkAndCloseDialog();
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[MODEL_DOWNLOADER] Error handling message event:', error);
+    }
+  }
+  
+  // Check if all active downloads are complete and close the dialog if appropriate
+  function checkAndCloseDialog() {
+    // Don't do anything if there are no active downloads
+    if (!window.modelDownloader || !window.modelDownloader.activeDownloads) {
+      return;
+    }
     
-    // Create a unique download ID before we even start the request
-    // This ensures we can show UI immediately
+    // First, check if there are any active downloads still in progress
+    const activeDownloads = window.modelDownloader.activeDownloads;
+    const activeDownloadIds = Object.keys(activeDownloads);
+    
+    // If no active downloads, nothing to check
+    if (activeDownloadIds.length === 0) {
+      return;
+    }
+    
+    // Check if all downloads are either completed or failed
+    const allComplete = activeDownloadIds.every(id => {
+      const download = activeDownloads[id];
+      return download.status === 'completed' || download.status === 'error';
+    });
+    
+    if (allComplete) {
+      console.log('[MODEL_DOWNLOADER] All downloads complete, attempting to close dialog');
+      
+      try {
+        // Find and access the Pinia dialog store which is where ComfyUI manages dialogs
+        let dialogStore = null;
+        
+        // Method 1: Try to find the dialog store in the Pinia instance
+        if (window?.$pinia?.state?.value?.dialog) {
+          console.log('[MODEL_DOWNLOADER] Found dialog store in Pinia state');
+          dialogStore = window?.$pinia?._s?.get('dialog');
+        }
+        
+        // Method 2: Check if app has store with direct dialog store reference
+        if (!dialogStore && window.app?.store?.dialog) {
+          console.log('[MODEL_DOWNLOADER] Found dialog store in app.store');
+          dialogStore = window.app.store.dialog;
+        }
+        
+        // Method 3: Check for a direct dialogStore property on app
+        if (!dialogStore && window.app?.dialogStore) {
+          console.log('[MODEL_DOWNLOADER] Found dialogStore in app');
+          dialogStore = window.app.dialogStore;
+        }
+        
+        // If we found a dialog store, try to close the dialog
+        if (dialogStore && typeof dialogStore.closeDialog === 'function') {
+          console.log('[MODEL_DOWNLOADER] Calling closeDialog on dialog store');
+          dialogStore.closeDialog({ key: 'global-missing-models-warning' });
+          
+          // Show a toast notification if available
+          if (window.app && typeof window.app.ui?.showToast === 'function') {
+            window.app.ui.showToast('All model downloads completed!', 3000, 0);
+          }
+          return;
+        }
+        
+        // Method 3: Look for PrimeVue dialog in the DOM
+        const primeVueDialog = document.querySelector('.p-dialog.global-dialog');
+        if (primeVueDialog && primeVueDialog.textContent.includes('Missing Models')) {
+          console.log('[MODEL_DOWNLOADER] Found PrimeVue dialog, attempting to close it');
+          
+          // Try to find and click the close button
+          const closeButton = primeVueDialog.querySelector('.p-dialog-header-close, .p-dialog-close-button');
+          if (closeButton) {
+            console.log('[MODEL_DOWNLOADER] Clicking close button on PrimeVue dialog');
+            closeButton.click();
+            
+            // Show a toast notification if available
+            if (window.app && typeof window.app.ui?.showToast === 'function') {
+              window.app.ui.showToast('All model downloads completed!', 3000, 0);
+            }
+            return;
+          }
+          
+          // If no close button found, try to hide the dialog
+          primeVueDialog.style.display = 'none';
+          return;
+        }
+        
+        // Method 4: Try to find the dialog in DOM and close it manually (fallback)
+        const dialogSelectors = [
+          '.comfy-modal.open',
+          '.sp-container dialog[open]',
+          '.comfy-menu dialog[open]', 
+          'div[id^="dialog"] dialog[open]',
+          'div.dialog dialog[open]',
+          'dialog[open]'
+        ];
+        
+        // Find the missing models dialog
+        for (const selector of dialogSelectors) {
+          const dialogs = document.querySelectorAll(selector);
+          for (const dialog of dialogs) {
+            if (dialog.textContent && dialog.textContent.includes('Missing Models')) {
+              // Close the dialog
+              console.log('[MODEL_DOWNLOADER] Closing dialog via DOM as all downloads are complete');
+              if (typeof dialog.close === 'function') {
+                dialog.close();
+              } else if (dialog.style) {
+                dialog.style.display = 'none';
+              }
+              
+              // Show a toast notification if available
+              if (window.app && typeof window.app.ui?.showToast === 'function') {
+                window.app.ui.showToast('All model downloads completed!', 3000, 0);
+              } else if (typeof window.toastr?.success === 'function') {
+                window.toastr.success('All model downloads completed!');
+              }
+              
+              return;
+            }
+          }
+        }
+        
+        // Method 5: Last resort - try to programmatically trigger Escape key to close modal
+        console.log('[MODEL_DOWNLOADER] Attempting to use Escape key to close dialog');
+        const escapeEvent = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          code: 'Escape',
+          keyCode: 27,
+          which: 27,
+          bubbles: true,
+          cancelable: true
+        });
+        document.dispatchEvent(escapeEvent);
+        
+      } catch (error) {
+        console.error('[MODEL_DOWNLOADER] Error trying to close dialog:', error);
+      }
+    }
+  }
+  
+  // Function to download model using backend API
+  async function downloadModelWithBackend(url, folder, filename, button) {
+    // Start download process
+    
+    // Ensure message handlers are registered before download
+    registerMessageHandlers();
+    
+    // Create a unique client ID for tracking
     const clientDownloadId = `${folder}_${filename}_${Date.now()}`;
     
-    // Create an initial progress UI immediately
-    const initialProgress = {
-      filename: filename,
+    // Add a data attribute to the button for easy lookup
+    if (button) {
+      button.setAttribute('data-download-id', clientDownloadId);
+    }
+    
+    // Disable button and show spinner
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner"></span> Downloading...';
+      button.style.cursor = 'not-allowed';
+      
+      // Store original button text in case we need to revert
+      button.setAttribute('data-original-text', button.textContent || 'Download with Model Downloader');
+      
+      // Add spinner CSS if not already added
+      if (!document.getElementById('model-downloader-spinner-style')) {
+        const style = document.createElement('style');
+        style.id = 'model-downloader-spinner-style';
+        style.textContent = `
+          .spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+          }
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    }
+    
+    // Store in the global object for tracking
+    if (!window.modelDownloader) {
+      window.modelDownloader = {};
+    }
+    if (!window.modelDownloader.activeDownloads) {
+      window.modelDownloader.activeDownloads = {};
+    }
+    window.modelDownloader.activeDownloads[clientDownloadId] = {
+      button: button,
+      url: url,
       folder: folder,
-      total_size: 1000000, // Placeholder size until we get real data
-      downloaded: 0,
-      percent: 0,
-      status: 'starting',
-      client_id: clientDownloadId
+      filename: filename,
+      status: 'downloading'
     };
     
-    // Store the download in our active downloads map
-    activeDownloads[clientDownloadId] = initialProgress;
-    
-    // Show UI
-    if (window.modelDownloaderUI && window.modelDownloaderUI.createOrUpdateProgressUI) {
-      window.modelDownloaderUI.createOrUpdateProgressUI(clientDownloadId, initialProgress);
-    } else {
-      console.warn('[MODEL_DOWNLOADER] UI module not loaded, cannot show progress');
+    // Initialize completedDownloads cache if needed
+    if (!window.modelDownloader.completedDownloads) {
+      window.modelDownloader.completedDownloads = {};
     }
     
     try {
-      // Prepare request data
+      // Prepare request data for server-side download
       const formData = new FormData();
       formData.append('url', url);
       formData.append('folder', folder);
+      formData.append('filename', filename);
       
-      if (filename) {
-        formData.append('filename', filename);
-      }
-      
-      // Add client download ID so we can track this download
-      formData.append('client_id', clientDownloadId);
-      
-      // Make the request
+      // Server request that returns immediately while download continues in background
       const response = await fetch('/api/download-model', {
         method: 'POST',
         body: formData
       });
-      
-      console.log(`[MODEL_DOWNLOADER] Server response status: ${response.status}`);
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -84,50 +458,107 @@
       const result = await response.json();
       
       if (result.success) {
-        console.log(`[MODEL_DOWNLOADER] Download started: ${result.filename}`);
+        // Download successfully initiated
         
-        // Update the progress info
-        activeDownloads[clientDownloadId].status = 'downloading';
-        if (result.id) {
-          activeDownloads[clientDownloadId].server_id = result.id;
-        }
-        if (result.filename) {
-          activeDownloads[clientDownloadId].filename = result.filename;
+        // Store the server-assigned download ID for future reference
+        if (window.modelDownloader.activeDownloads[clientDownloadId]) {
+          window.modelDownloader.activeDownloads[clientDownloadId].server_download_id = result.download_id;
         }
         
-        // Update the UI
-        if (window.modelDownloaderUI && window.modelDownloaderUI.createOrUpdateProgressUI) {
-          window.modelDownloaderUI.createOrUpdateProgressUI(clientDownloadId, activeDownloads[clientDownloadId]);
+        // Also store with the server's download ID for easier lookup
+        window.modelDownloader.activeDownloads[result.download_id] = {
+          button: button,
+          url: url,
+          folder: folder,
+          filename: filename,
+          status: 'downloading',
+          client_id: clientDownloadId
+        };
+        
+        // Update button with server download ID for direct matching
+        if (button) {
+          button.setAttribute('data-download-id', result.download_id);
+          button.setAttribute('data-server-download-id', result.download_id);
+          button.setAttribute('data-client-download-id', clientDownloadId);
         }
         
-        // Start polling for progress
-        if (window.modelDownloaderProgress && window.modelDownloaderProgress.startPolling) {
-          window.modelDownloaderProgress.startPolling(clientDownloadId);
+        // Check if we already have a completed status for this download in our cache
+        if (window.modelDownloader.completedDownloads && 
+            window.modelDownloader.completedDownloads[result.download_id]) {
+            
+          const cachedResult = window.modelDownloader.completedDownloads[result.download_id];
+          console.log('[MODEL_DOWNLOADER] Found cached completion status:', cachedResult.status);
+          
+          // Apply the cached status
+          if (cachedResult.status === 'completed') {
+            console.log('[MODEL_DOWNLOADER] Applying cached completed status');
+            updateButtonStatus(button, 'completed');
+          } else if (cachedResult.status === 'error') {
+            console.log('[MODEL_DOWNLOADER] Applying cached error status');
+            updateButtonStatus(button, 'error', cachedResult.error);
+          }
         }
+        
+        return result;
       } else if (result.error) {
         throw new Error(result.error);
       }
       
       return result;
     } catch (error) {
-      console.error('[MODEL_DOWNLOADER] Download error:', error);
+      console.error('[MODEL_DOWNLOADER] Download request failed:', error.message);
       
-      // Update UI to show error
-      activeDownloads[clientDownloadId].status = 'error';
-      activeDownloads[clientDownloadId].error = error.message;
-      
-      if (window.modelDownloaderUI && window.modelDownloaderUI.createOrUpdateProgressUI) {
-        window.modelDownloaderUI.createOrUpdateProgressUI(clientDownloadId, activeDownloads[clientDownloadId]);
-      }
+      // Update button with error
+      updateButtonStatus(button, 'error', error.message);
       
       throw error;
     }
   }
+
+// Update the button status based on download status
+function updateButtonStatus(button, status, errorMessage) {
+  if (!button) return;
   
-  // Patch the download buttons in the missing models dialog
-  function patchMissingModelButtons() {
-    console.log('[MODEL_DOWNLOADER] Patching missing model buttons...');
-    
+  if (status === 'completed') {
+    button.disabled = true;
+
+    // Just show "Downloaded" when complete, no file size
+    button.innerHTML = 'Downloaded';
+
+    // Keep original styling - don't change color
+    button.style.cursor = 'default';
+    button.setAttribute('data-download-status', 'completed');
+    // Show a toast notification for download completion if possible
+    if (window.app && typeof window.app.ui?.showToast === 'function') {
+      window.app.ui.showToast('Model download completed!', 3000, 0);
+    } else if (typeof window.toastr?.success === 'function') {
+      window.toastr.success('Model download completed!');
+    } else {
+      console.log('[MODEL_DOWNLOADER] Download completed');
+    }
+  } else if (status === 'error') {
+    button.disabled = false;
+    button.innerHTML = '❌ Failed - Try Again';
+    button.style.backgroundColor = '#F44336';
+    button.style.cursor = 'pointer';
+    button.title = errorMessage || 'Download failed';
+    button.setAttribute('data-download-status', 'error');
+    // Show error notification if possible
+    if (window.app && typeof window.app.ui?.showToast === 'function') {
+      window.app.ui.showToast('Download failed: ' + (errorMessage || 'Unknown error'), 5000, 2);
+    } else if (typeof window.toastr?.error === 'function') {
+      window.toastr.error('Download failed: ' + (errorMessage || 'Unknown error'));
+    } else {
+      console.error('[MODEL_DOWNLOADER] Download failed:', errorMessage || 'Unknown error');
+    }
+  } 
+}
+
+// Patch the download buttons in the missing models dialog
+function patchMissingModelButtons() {
+  // Set up missing model button patching
+  
+  // ... rest of the code remains the same ...
     // Selectors for finding dialogs and buttons
     const dialogSelectors = [
       '.p-dialog.global-dialog',  // ComfyUI missing models dialog
@@ -153,23 +584,17 @@
     const dialogSelector = dialogSelectors.join(', ');
     const buttonSelector = buttonSelectors.join(', ');
     
-    console.log('[MODEL_DOWNLOADER] Dialog selectors:', dialogSelector);
-    console.log('[MODEL_DOWNLOADER] Button selectors:', buttonSelector);
-    
     // Function to find and patch all download buttons
     function patchAllButtons() {
-      console.log('[MODEL_DOWNLOADER] Scanning for missing model dialogs...');
       let patchedCount = 0;
       
       // Find all dialogs that could be missing models dialogs
       document.querySelectorAll(dialogSelector).forEach(dialog => {
         // Check if this looks like a missing models dialog
         if (dialog.textContent && dialog.textContent.includes('Missing Models')) {
-          console.log('[MODEL_DOWNLOADER] Found Missing Models dialog:', dialog);
           
           // Find all potential download buttons in this dialog
           const buttons = dialog.querySelectorAll(buttonSelector);
-          console.log(`[MODEL_DOWNLOADER] Found ${buttons.length} potential download buttons in dialog`);
           
           // Process each button
           buttons.forEach(button => {
@@ -182,12 +607,9 @@
             const buttonText = button.textContent || '';
             const buttonTitle = button.getAttribute('title') || '';
             
-            // More permissive detection of download buttons
-            // Either has 'Download' in text or is a button in a Missing Models dialog
-            if (buttonText.includes('Download') || 
-                (button.tagName === 'BUTTON' && dialog.textContent.includes('Missing Models'))) {
-              console.log('[MODEL_DOWNLOADER] Found download button with text:', buttonText);
-              console.log('[MODEL_DOWNLOADER] Found download button:', button);
+            if ((buttonText.includes('Download') || 
+                (button.tagName === 'BUTTON' && dialog.textContent.includes('Missing Models'))) &&
+                (buttonTitle.includes('http') || button.getAttribute('href')?.includes('http'))) {
               
               // Mark button as patched
               button.setAttribute('data-model-downloader-patched', 'true');
@@ -203,14 +625,12 @@
                 const closestLink = button.closest('a[href]');
                 if (closestLink && closestLink.href.includes('http')) {
                   modelUrl = closestLink.href;
-                  console.log(`[MODEL_DOWNLOADER] Found URL in parent link: ${modelUrl}`);
                 } else {
                   // Look for text that resembles a URL in the dialog
                   const dialogText = dialog.textContent;
                   const urlMatch = dialogText.match(/(https?:\/\/[^\s]+)/);
                   if (urlMatch) {
                     modelUrl = urlMatch[0];
-                    console.log(`[MODEL_DOWNLOADER] Extracted URL from text: ${modelUrl}`);
                   }
                 }
               }
@@ -226,7 +646,6 @@
                     const parts = pathText.split('/');
                     folderName = parts[0].trim();
                     fileName = parts.slice(1).join('/').trim();
-                    console.log(`[MODEL_DOWNLOADER] Extracted path: ${folderName}/${fileName}`);
                   }
                 }
               }
@@ -237,7 +656,6 @@
                   const urlObj = new URL(modelUrl);
                   const pathParts = urlObj.pathname.split('/');
                   fileName = pathParts[pathParts.length - 1] || 'downloaded_model';
-                  console.log(`[MODEL_DOWNLOADER] Extracted filename from URL: ${fileName}`);
                 } catch (e) {
                   console.error('[MODEL_DOWNLOADER] Error parsing URL:', e);
                 }
@@ -252,20 +670,58 @@
                 for (const hint of folderHints) {
                   if (dialogText.includes(hint)) {
                     folderName = hint;
-                    console.log(`[MODEL_DOWNLOADER] Detected folder type from context: ${folderName}`);
                     break;
                   }
                 }
               }
               
-              // Store original button state and extracted info
-              const originalOnClick = button.onclick;
-              const originalText = button.textContent;
+              // Create a new button
+              const newButton = document.createElement('button');
               
-              // Store download info on the button element
-              button.dataset.modelUrl = modelUrl;
-              button.dataset.folderName = folderName;
-              button.dataset.fileName = fileName;
+              // Copy all the important attributes
+              newButton.className = button.className;
+              newButton.style.cssText = button.style.cssText;
+              newButton.type = 'button';
+              newButton.title = button.title;
+              // Try to get the model size from various places
+              let sizeText = '';
+              const parent = button.parentElement;
+              const modelListItem = button.closest('li');
+              
+              // First check the button's own text or title
+              const buttonTextMatch = (button.textContent || '').match(/(\d+(?:\.\d+)?)\s*(MB|GB)/i);
+              const buttonTitleMatch = (button.title || '').match(/(\d+(?:\.\d+)?)\s*(MB|GB)/i);
+              
+              // Then check parent element
+              const parentMatch = parent && parent.textContent ? 
+                parent.textContent.match(/(\d+(?:\.\d+)?)\s*(MB|GB)/i) : null;
+                
+              // Check list item if available
+              const listItemMatch = modelListItem && modelListItem.textContent ? 
+                modelListItem.textContent.match(/(\d+(?:\.\d+)?)\s*(MB|GB)/i) : null;
+                
+              // Check dialog text
+              const dialogTextMatch = dialog.textContent ? 
+                dialog.textContent.match(/(\d+(?:\.\d+)?)\s*(MB|GB)/i) : null;
+              
+              // Use the first match found
+              const match = buttonTextMatch || buttonTitleMatch || parentMatch || listItemMatch || dialogTextMatch;
+              if (match) {
+                sizeText = ` (${match[0]})`;
+              } else {
+                // If no size found, try to fetch size from the URL
+                console.log('[MODEL_DOWNLOADER] No size found, will display size after fetching metadata');
+              }
+              
+              newButton.textContent = `Download with Model Downloader${sizeText}`;
+              
+              // Mark as patched
+              newButton.setAttribute('data-model-downloader-patched', 'true');
+              
+              // Store the URL
+              newButton.setAttribute('data-model-url', modelUrl);
+              newButton.setAttribute('data-folder-name', folderName);
+              newButton.setAttribute('data-file-name', fileName);
               
               // Create download handler function
               const downloadHandler = function(e) {
@@ -275,56 +731,49 @@
                   e.stopPropagation();
                 }
                 
-                console.log('[MODEL_DOWNLOADER] Download button clicked');
-                console.log('[MODEL_DOWNLOADER] Button text:', button.textContent);
-                console.log('[MODEL_DOWNLOADER] Button title:', button.title);
-                console.log('[MODEL_DOWNLOADER] Button href:', button.href);
-                console.log('[MODEL_DOWNLOADER] Button dataset:', button.dataset);
-                
-                // Get stored info from the button
-                const url = button.dataset.modelUrl;
-                let folder = button.dataset.folderName;
-                let filename = button.dataset.fileName;
-                
-                // Show we're downloading
-                button.textContent = 'Downloading...';
-                button.disabled = true;
+                // Get the URL directly from the button attributes
+                const url = newButton.getAttribute('data-model-url') || newButton.getAttribute('title') || '';
+                let folder = newButton.getAttribute('data-folder-name') || '';
+                let filename = newButton.getAttribute('data-file-name') || '';
                 
                 // Prompt for missing info if needed
-                if (!url) {
+                if (!url || !url.includes('http')) {
                   alert('Could not determine download URL. Please download manually.');
-                  button.textContent = originalText;
-                  button.disabled = false;
                   return;
                 }
                 
                 if (!folder) {
                   folder = prompt('Please specify the model folder type:', 'checkpoints');
                   if (!folder) {
-                    button.textContent = originalText;
-                    button.disabled = false;
                     return;
                   }
                 }
                 
-                // Call our backend download API
-                downloadModelWithBackend(url, folder, filename)
+                // Extract filename from URL if not already set
+                if (!filename && url) {
+                  try {
+                    const urlObj = new URL(url);
+                    const pathParts = urlObj.pathname.split('/');
+                    filename = pathParts[pathParts.length - 1] || 'downloaded_model';
+                  } catch (e) {
+                    filename = 'downloaded_model';
+                  }
+                }
+                
+                // Call our backend download API with the button instance so it can be updated
+                downloadModelWithBackend(url, folder, filename, newButton)
                   .catch(error => {
                     console.error('[MODEL_DOWNLOADER] Download error:', error);
-                    button.textContent = originalText;
-                    button.disabled = false;
-                    alert(`Download failed: ${error.message}`);
                   });
               };
               
-              // Override the button's click behavior
-              button.onclick = downloadHandler;
+              // Set click handler
+              newButton.addEventListener('click', downloadHandler);
               
-              // Also use an event listener as a backup approach
-              button.addEventListener('click', downloadHandler, true);
-              
-              // Update button text
-              button.textContent = 'Download with Model Downloader';
+              // Replace the old button with our new one
+              if (button.parentNode) {
+                button.parentNode.replaceChild(newButton, button);
+              }
               
               // Count patched buttons
               patchedCount++;
@@ -332,8 +781,6 @@
           });
         }
       });
-      
-      console.log(`[MODEL_DOWNLOADER] Patched ${patchedCount} download buttons`);
     }
     
     // Patch immediately once
@@ -346,16 +793,13 @@
           for (const node of mutation.addedNodes) {
             if (node.nodeType === Node.ELEMENT_NODE) {
               // Check if this node or any of its children match our dialog selectors
-              if ((node.matches && node.matches(dialogSelector)) || 
-                  (node.querySelector && node.querySelector(dialogSelector))) {
-                console.log('[MODEL_DOWNLOADER] New dialog detected via mutation observer:', node);
-                patchAllButtons();
-                return;
-              }
-              
+              const isDialog = (node.matches && node.matches(dialogSelector)) || 
+                  (node.querySelector && node.querySelector(dialogSelector));
+                  
               // Or if it has "Missing Models" in its text content
-              if (node.textContent && node.textContent.includes('Missing Models')) {
-                console.log('[MODEL_DOWNLOADER] Missing Models dialog detected via text content:', node);
+              const hasMissingModels = node.textContent && node.textContent.includes('Missing Models');
+              
+              if (isDialog || hasMissingModels) {
                 patchAllButtons();
                 return;
               }
@@ -373,31 +817,25 @@
       attributeFilter: ['style', 'class']
     });
     
-    console.log('[MODEL_DOWNLOADER] Mutation observer set up for dialog detection');
-    
     // Also poll occasionally for dialogs that might have been missed
     const pollInterval = setInterval(function() {
       const dialogs = document.querySelectorAll(dialogSelector);
       for (const dialog of dialogs) {
         if (dialog.textContent && dialog.textContent.includes('Missing Models')) {
-          console.log('[MODEL_DOWNLOADER] Missing Models dialog found via polling');
+          // We found a dialog to patch
           patchAllButtons();
           return;
         }
       }
-    }, 2000); // Poll every 2 seconds
+    }, 1000); // Poll every second
   }
   
   // Define initialize function
   function initialize() {
-    console.log('[MODEL_DOWNLOADER] Initializing core module...');
+    // Initialize core module
     
-    // Initialize the WebSocket listener for progress updates
-    if (window.modelDownloaderProgress && window.modelDownloaderProgress.setupWebSocketListener) {
-      window.modelDownloaderProgress.setupWebSocketListener();
-    } else {
-      console.warn('[MODEL_DOWNLOADER] Progress module not loaded or setupWebSocketListener not found');
-    }
+    // Register message handlers immediately
+    registerMessageHandlers();
     
     // Patch the missing model buttons
     patchMissingModelButtons();
@@ -406,15 +844,16 @@
     if (document.readyState === 'loading') {
       // If not, wait for it to load
       document.addEventListener('DOMContentLoaded', () => {
-        console.log('[MODEL_DOWNLOADER] DOM loaded, patching...');
         patchMissingModelButtons();
       });
     } else {
-      console.log('[MODEL_DOWNLOADER] DOM already loaded, patching immediately');
-      patchMissingModelButtons();
+      // Run the patching immediately, but also run it again after a short delay
+      // This helps catch dialogs that might be created by scripts after page load
+      setTimeout(() => {
+        patchMissingModelButtons();
+      }, 1000);
     }
     
-    console.log('[MODEL_DOWNLOADER] Core module initialized successfully!');
     return true;
   }
 
@@ -424,12 +863,15 @@
     isTrustedDomain: isTrustedDomain,
     downloadModelWithBackend: downloadModelWithBackend,
     patchMissingModelButtons: patchMissingModelButtons,
-    initialize: initialize
+    initialize: initialize,
+    updateButtonStatus: updateButtonStatus,
+    registerMessageHandlers: registerMessageHandlers,
+    handleMessageEvent: handleMessageEvent,
+    checkAndCloseDialog: checkAndCloseDialog
   };
   
   // Make sure modelDownloader exists before assigning to it
   if (!window.modelDownloader) {
-    console.log('[MODEL_DOWNLOADER] Creating window.modelDownloader object');
     window.modelDownloader = {
       activeDownloads: {}
     };
@@ -438,8 +880,8 @@
   // Add core functions to the main modelDownloader object
   Object.assign(window.modelDownloader, window.modelDownloaderCore);
   
+  // Register message handlers immediately
+  registerMessageHandlers();
+  
   // Do NOT call initialize automatically - let backend_download.js call it
-  console.log('[MODEL_DOWNLOADER] Core module loaded and ready');
 })();
-
-console.log('[MODEL_DOWNLOADER] Core module loaded');
