@@ -23,7 +23,8 @@ async def download_model(request):
     Handle POST requests to download models
     """
     try:
-        data = await request.json()
+        # Handle FormData instead of JSON
+        data = await request.post()
         url = data.get('url')
         folder = data.get('folder')
         filename = data.get('filename')
