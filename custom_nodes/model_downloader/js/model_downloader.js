@@ -7,23 +7,22 @@ if (window.location.hostname === 'localhost' || window.location.hostname === '12
 // Register message handler as early as possible
 function registerMessageHandler() {
     try {
-        // Try first method: Using API extension system
+        // Register the model_download_progress message type in all possible ways
+        // to ensure compatibility with different ComfyUI versions
+        
+        // Method 1: Add to the reportedUnknownMessageTypes set if it exists
+        if (window.api && typeof window.api.reportedUnknownMessageTypes !== 'undefined') {
+            if (!(window.api.reportedUnknownMessageTypes instanceof Set)) {
+                window.api.reportedUnknownMessageTypes = new Set();
+            }
+            window.api.reportedUnknownMessageTypes.add('model_download_progress');
+        }
+        
+        // Method 2: Using API extension system (newer ComfyUI versions)
         if (window.api && typeof window.api.registerExtension === 'function') {
-            // Register with ComfyUI API extension system
             window.api.registerExtension({
                 name: "model_downloader",
                 init() {
-                    // Register message types with API
-                    
-                    // Add the type directly to API registered types so it doesn't error
-                    if (!window.api.reportedUnknownMessageTypes) {
-                        window.api.reportedUnknownMessageTypes = new Set();
-                    }
-                    
-                    // Register our custom message type by adding it to the API's reported set
-                    window.api.reportedUnknownMessageTypes.add('model_download_progress');
-                    
-                    // Register a standard event listener (ComfyUI extended API)
                     window.api.addEventListener("model_download_progress", function(data) {
                         // Forward to our event handler function if available
                         if (window.modelDownloader && typeof window.modelDownloader.handleMessageEvent === 'function') {
@@ -34,82 +33,53 @@ function registerMessageHandler() {
             });
         }
         
-        // Try second method: Using custom API message handler (newer ComfyUI versions)
+        // Method 3: Using custom API message handler (alternative newer ComfyUI versions)
         if (window.app && typeof window.app.registerMessageHandler === 'function') {
             window.app.registerMessageHandler('model_download_progress', function(event) {
-                // Forward to our event handler function if available
                 if (window.modelDownloader && typeof window.modelDownloader.handleMessageEvent === 'function') {
                     window.modelDownloader.handleMessageEvent(event);
                 }
             });
         }
         
-        // Try third method: Direct WebSocket monkey patching (older ComfyUI versions)
+        // Method 4: Direct WebSocket patching (fallback for older ComfyUI versions)
         function patchWebSocket() {
+            // Find the WebSocket object to patch
+            let socket = null;
+            let socketParent = null;
+            
             if (window.app && window.app.socket && window.app.socket instanceof WebSocket) {
-                // Add the message type to the registered set to prevent the error
-                if (window.api && window.api.reportedUnknownMessageTypes instanceof Set) {
-                    window.api.reportedUnknownMessageTypes.add('model_download_progress');
-                }
-                
-                const originalOnMessage = window.app.socket.onmessage;
-                window.app.socket.onmessage = function(event) {
-                    // Call original first
-                    if (originalOnMessage) {
-                        originalOnMessage.call(this, event);
-                    }
-                    
-                    // Then handle for our own messages
-                    try {
-                        const message = JSON.parse(event.data);
-                        if (message.type === 'model_download_progress') {
-                            // Forward to our core handler function if available
-                            if (window.modelDownloader && typeof window.modelDownloader.handleMessageEvent === 'function') {
-                                window.modelDownloader.handleMessageEvent(message);
-                            }
-                            // Also forward it as a custom event
-                            if (window.app && typeof window.app.dispatchEvent === 'function') {
-                                window.app.dispatchEvent(new CustomEvent('model_download_progress', {detail: message}));
-                            }
-                        }
-                    } catch (e) {
-                        // Ignore JSON parse errors
-                    }
-                };
-            } 
-            // Also try the API socket if exists
-            else if (window.app && window.app.api && window.app.api.socket && window.app.api.socket instanceof WebSocket) {
-                // Add the message type to the registered set to prevent the error
-                if (window.app.api.reportedUnknownMessageTypes instanceof Set) {
-                    window.app.api.reportedUnknownMessageTypes.add('model_download_progress');
-                }
-                
-                const originalOnMessage = window.app.api.socket.onmessage;
-                window.app.api.socket.onmessage = function(event) {
-                    // Call original first
-                    if (originalOnMessage) {
-                        originalOnMessage.call(this, event);
-                    }
-                    
-                    // Then handle for our own messages
-                    try {
-                        const message = JSON.parse(event.data);
-                        if (message.type === 'model_download_progress') {
-                            // Forward to our core handler function if available
-                            if (window.modelDownloader && typeof window.modelDownloader.handleMessageEvent === 'function') {
-                                window.modelDownloader.handleMessageEvent(message);
-                            }
-                            // Also forward it as a custom event
-                            if (window.app && typeof window.app.dispatchEvent === 'function') {
-                                window.app.dispatchEvent(new CustomEvent('model_download_progress', {detail: message}));
-                            }
-                        }
-                    } catch (e) {
-                        // Ignore JSON parse errors
-                    }
-                };
+                socket = window.app.socket;
+                socketParent = window.app;
+            } else if (window.app && window.app.api && window.app.api.socket && window.app.api.socket instanceof WebSocket) {
+                socket = window.app.api.socket;
+                socketParent = window.app.api;
             }
-            else {
+            
+            // If we found a socket, patch its onmessage handler
+            if (socket) {
+                const originalOnMessage = socket.onmessage;
+                socket.onmessage = function(event) {
+                    // Call original handler first
+                    if (originalOnMessage) {
+                        originalOnMessage.call(this, event);
+                    }
+                    
+                    // Then handle for our own messages
+                    try {
+                        const message = JSON.parse(event.data);
+                        if (message.type === 'model_download_progress') {
+                            // Forward to our handler
+                            if (window.modelDownloader && typeof window.modelDownloader.handleMessageEvent === 'function') {
+                                window.modelDownloader.handleMessageEvent(message);
+                            }
+                        }
+                    } catch (e) {
+                        // Ignore JSON parse errors
+                    }
+                };
+                console.log("[MODEL_DOWNLOADER] Successfully patched WebSocket handler");
+            } else {
                 // Try again later when app is fully loaded
                 setTimeout(patchWebSocket, 500);
             }

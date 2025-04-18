@@ -3,57 +3,68 @@
 // It loads the core component and initializes the downloader
 
 (function() {
-  // Initialize the global modelDownloader object
-  window.modelDownloader = {
-    activeDownloads: {}
-  };
+  // Initialize the global modelDownloader object if it doesn't exist
+  if (!window.modelDownloader) {
+    window.modelDownloader = {
+      activeDownloads: {}
+    };
+  }
   
-  // Define a function to dynamically load JavaScript files
+  // Define a function to dynamically load JavaScript files with proper error handling
   function loadScript(url, callback) {
+    console.log(`[MODEL_DOWNLOADER] Loading script from: ${url}`);
     const script = document.createElement('script');
     script.type = 'text/javascript';
     script.src = url;
-    script.onload = callback;
-    script.onerror = (error) => {
-      // Error loading script (silent in production)
+    script.onload = function() {
+      console.log(`[MODEL_DOWNLOADER] Successfully loaded: ${url}`);
+      if (typeof callback === 'function') callback();
+    };
+    script.onerror = function(error) {
+      console.error(`[MODEL_DOWNLOADER] Error loading script from ${url}:`, error);
     };
     document.head.appendChild(script);
   }
 
-  // Load the core module
-  function loadModules() {
-    // Get the current script path to determine the base path
+  // Determine the base path for loading modules
+  function getBasePath() {
+    // Try to find the current script path
     const scripts = document.getElementsByTagName('script');
-    let basePath = '';
-    
-    // First try to find the current script
     for (const script of scripts) {
-      if (script.src && (script.src.includes('backend_download.js') || script.src.includes('model_downloader') || script.src.includes('download'))) {
-        basePath = script.src.substring(0, script.src.lastIndexOf('/') + 1);
-        break;
+      if (script.src && script.src.includes('backend_download.js')) {
+        return script.src.substring(0, script.src.lastIndexOf('/') + 1);
       }
     }
     
-    // If still not found, determine base path from window location
-    if (!basePath) {
-      // Try to derive it from the current page URL
-      const currentUrl = window.location.href;
-      const urlObj = new URL(currentUrl);
-      
-      // Use the extensions path which is how ComfyUI serves custom node files
-      basePath = `${urlObj.protocol}//${urlObj.host}/extensions/model_downloader/`;
+    // If not found, try to find any model_downloader script
+    for (const script of scripts) {
+      if (script.src && script.src.includes('model_downloader')) {
+        return script.src.substring(0, script.src.lastIndexOf('/') + 1);
+      }
     }
     
-    // Load the core module
+    // Fallback to extensions path based on current URL
+    const currentUrl = window.location.href;
+    const urlObj = new URL(currentUrl);
+    return `${urlObj.protocol}//${urlObj.host}/extensions/model_downloader/`;
+  }
+
+  // Load the core module and initialize the downloader
+  function loadCoreModule() {
+    const basePath = getBasePath();
     const corePath = basePath + 'model_downloader_core.js';
+    
     loadScript(corePath, function() {
       // Initialize the downloader once loaded
-      if (window.modelDownloader && window.modelDownloader.initialize) {
+      if (window.modelDownloader && typeof window.modelDownloader.initialize === 'function') {
+        console.log('[MODEL_DOWNLOADER] Initializing model downloader...');
         window.modelDownloader.initialize();
+      } else {
+        console.error('[MODEL_DOWNLOADER] Failed to initialize - core module not properly loaded');
       }
     });
   }
-    
-  // Start loading modules
-  loadModules();
+  
+  // Start loading the core module
+  loadCoreModule();
 })();

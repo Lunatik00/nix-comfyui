@@ -7,11 +7,13 @@
   if (window.modelDownloaderCoreLoaded) {
     // If the core is already loaded, just make sure the button patching function is still executed
     if (typeof window.modelDownloader?.patchMissingModelButtons === 'function') {
+      console.log('[MODEL_DOWNLOADER] Core already loaded, re-running button patching');
       window.modelDownloader.patchMissingModelButtons();
       return;
     }
   }
   window.modelDownloaderCoreLoaded = true;
+  console.log('[MODEL_DOWNLOADER] Loading core functionality');
 
   // Map to store active downloads
   const activeDownloads = {};
@@ -34,81 +36,6 @@
     } catch (e) {
       console.error('[MODEL_DOWNLOADER] Error parsing URL:', e);
       return false;
-    }
-  }
-  
-  // Register message handler for the download progress immediately
-  // Important: This needs to be done before any downloads start
-  function registerMessageHandlers() {
-    // Try multiple ways to register the message handler
-    try {
-      if (window.api && typeof window.api.registerExtension === 'function') {
-        // Register with ComfyUI API extension system
-        window.api.registerExtension({
-          name: "model_downloader",
-          // Register our custom message type
-          init() {
-            api.addEventListener("model_download_progress", function(data) {
-              handleMessageEvent(data);
-            });
-          }
-        });
-      } 
-      // ComfyUI might use a different registration mechanism in different versions
-      else if (window.app && typeof window.app.registerMessageHandler === 'function') {
-        // Register with ComfyUI app.registerMessageHandler
-        window.app.registerMessageHandler('model_download_progress', handleMessageEvent);
-      }
-      // Legacy way - directly attach to WebSocket if API extensions are not available
-      else if (window.app && window.app.socket && window.app.socket instanceof WebSocket) {
-        // Using direct WebSocket approach
-        const originalSocketOnMessage = window.app.socket.onmessage;
-        window.app.socket.onmessage = function(event) {
-          // First call the original handler
-          if (originalSocketOnMessage) {
-            originalSocketOnMessage.call(this, event);
-          }
-          
-          // Then process for our own purposes
-          try {
-            const message = JSON.parse(event.data);
-            if (message.type === 'model_download_progress') {
-              handleMessageEvent(message);
-            }
-          } catch (e) {
-            // Ignore errors in our handler
-          }
-        };
-      }
-      // If ComfyUI socket is in the custom API
-      else if (window.app && window.app.api && window.app.api.socket && window.app.api.socket instanceof WebSocket) {
-        // Using api.socket approach
-        const originalSocketOnMessage = window.app.api.socket.onmessage;
-        window.app.api.socket.onmessage = function(event) {
-          // First call the original handler
-          if (originalSocketOnMessage) {
-            originalSocketOnMessage.call(this, event);
-          }
-          
-          // Then process for our own purposes
-          try {
-            const message = JSON.parse(event.data);
-            if (message.type === 'model_download_progress') {
-              handleMessageEvent(message);
-            }
-          } catch (e) {
-            // Ignore errors in our handler
-          }
-        };
-      }
-      
-      // Also register custom event listener
-      if (window.app && typeof window.app.addEventListener === 'function') {
-        console.log('[MODEL_DOWNLOADER] Adding event listener to app');
-        window.app.addEventListener('model_download_progress', handleMessageEvent);
-      }
-    } catch (error) {
-      console.error('[MODEL_DOWNLOADER] Error registering message handler:', error);
     }
   }
   
@@ -369,13 +296,12 @@
       }
     }
   }
-  
+
   // Function to download model using backend API
   async function downloadModelWithBackend(url, folder, filename, button) {
     // Start download process
     
-    // Ensure message handlers are registered before download
-    registerMessageHandlers();
+    // Message handlers are registered in model_downloader.js
     
     // Create a unique client ID for tracking
     const clientDownloadId = `${folder}_${filename}_${Date.now()}`;
@@ -438,16 +364,22 @@
     }
     
     try {
-      // Prepare request data for server-side download
-      const formData = new FormData();
-      formData.append('url', url);
-      formData.append('folder', folder);
-      formData.append('filename', filename);
+      // Prepare request data as JSON instead of FormData for better compatibility
+      const jsonData = {
+        url: url,
+        folder: folder,
+        filename: filename
+      };
+      
+      console.log('[MODEL_DOWNLOADER] Sending download request with data:', jsonData);
       
       // Server request that returns immediately while download continues in background
       const response = await fetch('/api/download-model', {
         method: 'POST',
-        body: formData
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(jsonData)
       });
       
       if (!response.ok) {
@@ -834,8 +766,8 @@ function patchMissingModelButtons() {
   function initialize() {
     // Initialize core module
     
-    // Register message handlers immediately
-    registerMessageHandlers();
+    // Message handlers are now registered in model_downloader.js
+    // registerMessageHandlers() call removed
     
     // Patch the missing model buttons
     patchMissingModelButtons();
@@ -865,7 +797,7 @@ function patchMissingModelButtons() {
     patchMissingModelButtons: patchMissingModelButtons,
     initialize: initialize,
     updateButtonStatus: updateButtonStatus,
-    registerMessageHandlers: registerMessageHandlers,
+    // registerMessageHandlers removed - now in model_downloader.js
     handleMessageEvent: handleMessageEvent,
     checkAndCloseDialog: checkAndCloseDialog
   };
@@ -880,8 +812,7 @@ function patchMissingModelButtons() {
   // Add core functions to the main modelDownloader object
   Object.assign(window.modelDownloader, window.modelDownloaderCore);
   
-  // Register message handlers immediately
-  registerMessageHandlers();
+  // Message handlers are registered in model_downloader.js
   
   // Do NOT call initialize automatically - let backend_download.js call it
 })();

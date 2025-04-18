@@ -33,13 +33,50 @@ async def download_model(request):
     This function returns IMMEDIATELY after starting a background download
     """
     try:
-        # Try to parse as JSON first
-        try:
+        # Get request content type
+        content_type = request.headers.get('Content-Type', '')
+        
+        # Initialize data dictionary
+        data = {}
+        
+        # Handle different content types
+        if 'application/json' in content_type:
+            # Parse JSON data
             data = await request.json()
-        except:
-            # If JSON parsing fails, try to parse as form data
-            data = await request.post()
+        elif 'application/x-www-form-urlencoded' in content_type:
+            # Parse form data
+            form_data = await request.post()
+            data = dict(form_data)
+        else:
+            # Try to read the request body as text and parse parameters
+            body = await request.text()
+            logger.info(f"Request body: {body[:200]}...") # Log first 200 chars of body
             
+            # Try to extract parameters from the request body or query string
+            if request.query:
+                # Parse query parameters
+                for key, value in request.query.items():
+                    data[key] = value
+            
+            # If we still don't have data, try to parse as JSON as a fallback
+            if not data and body:
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    # If all else fails, try to extract parameters from the URL-encoded body
+                    try:
+                        for param in body.split('&'):
+                            if '=' in param:
+                                key, value = param.split('=', 1)
+                                data[key] = value
+                    except Exception as e:
+                        logger.error(f"Error parsing request body: {e}")
+        
+        # Extra logging for debugging
+        logger.info(f"Request headers: {request.headers}")
+        logger.info(f"Parsed data: {data}")
+        
+        # Get parameters from the parsed data
         url = data.get('url')
         folder = data.get('folder')
         filename = data.get('filename')
@@ -198,7 +235,9 @@ async def download_file(download_id, url, full_path):
                 update_interval = 1.0  # Only send updates every 1 second
                 last_update_time = 0
                 percent_logged = -1  # Track last logged percentage
-                logger.info(f"[{download_id}] Beginning data transfer for {filename}")
+                # Extract filename from full_path
+                extracted_filename = os.path.basename(full_path)
+                logger.info(f"[{download_id}] Beginning data transfer for {extracted_filename}")
                 
                 with open(full_path, 'wb') as f:
                     async for chunk in response.content.iter_chunked(1024 * 1024):

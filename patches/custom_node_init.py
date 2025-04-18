@@ -54,14 +54,8 @@ def setup_js_api(app, *args, **kwargs):
     
     return app
 
-# Register our setup_js_api function
-try:
-    print("[MODEL_DOWNLOADER] Registering API endpoint...")
-    PromptServer.instance.add_api_route = setup_js_api
-    print("[MODEL_DOWNLOADER] API endpoint registered successfully")
-except Exception as e:
-    print(f"[MODEL_DOWNLOADER] Error registering API endpoint: {e}")
-    import traceback
-    traceback.print_exc()
+# API endpoints are now registered directly in the model_downloader/__init__.py file
+# This file exists only for backwards compatibility and to ensure
+# the custom node JS files are correctly served
 
 print(f"Model Downloader patch loaded successfully from {WEB_DIRECTORY}")
