@@ -99,7 +99,7 @@ cp -r "@modelDownloaderDir@"/* "$CUSTOM_NODE_DIR/model_downloader/"
 # Copy the model downloader patch to the main directory for import
 cp "$CUSTOM_NODE_DIR/model_downloader/model_downloader_patch.py" "$CODE_DIR/model_downloader_patch.py"
 
-# No need to create model_downloader.js or web_extensions.json as they are copied from the custom_nodes directory
+# No need to create model_downloader.js or web_extensions.json as they are copied from the src/custom_nodes directory
 
 # Setup virtual environment if needed
 if [ ! -d "$COMFY_VENV" ]; then

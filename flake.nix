@@ -41,7 +41,7 @@
         };
         
         # Model downloader custom node
-        modelDownloaderDir = ./custom_nodes/model_downloader;
+        modelDownloaderDir = ./src/custom_nodes/model_downloader;
         
         # Python environment with minimal dependencies
         # Most dependencies will be installed via pip in the virtual environment

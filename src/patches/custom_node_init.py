@@ -11,10 +11,10 @@ NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 # Import our model downloader patch
-from . import model_downloader_patch
+from ..custom_nodes.model_downloader import model_downloader_patch
 
 # Register the web extension
-WEB_DIRECTORY = os.path.join(os.path.dirname(os.path.realpath(__file__)), "js")
+WEB_DIRECTORY = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "custom_nodes/model_downloader/js")
 
 # Ensure the js directory exists
 if not os.path.exists(WEB_DIRECTORY):
