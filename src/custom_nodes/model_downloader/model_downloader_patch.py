@@ -6,10 +6,8 @@ import requests
 import json
 import logging
 import traceback
-from pathlib import Path
 import folder_paths
 from aiohttp import web, ClientSession, ClientTimeout
-import concurrent.futures
 from server import PromptServer
 
 # Setup logging
@@ -389,9 +387,11 @@ async def list_downloads(request):
             "error": str(e)
         })
 
+# This function is kept for compatibility but endpoints are registered in __init__.py
 def setup_js_api(app, *args, **kwargs):
     """
-    Set up the JavaScript API for the model downloader.
+    This function remains for compatibility with ComfyUI extension system.
+    API endpoints are now registered in the __init__.py file to avoid duplicates.
     
     Args:
         app: The aiohttp application
@@ -399,18 +399,5 @@ def setup_js_api(app, *args, **kwargs):
     Returns:
         The modified app
     """
-    logger.info("Setting up JavaScript API and registering endpoints")
-    
-    # Register the API endpoints
-    try:
-        app.router.add_post('/api/download-model', download_model)
-        app.router.add_get('/api/download-progress/{download_id}', get_download_progress)
-        app.router.add_get('/api/downloads', list_downloads)
-        logger.info("API endpoints registered")
-    except Exception as e:
-        logger.error(f"Error registering API endpoints: {e}")
-        traceback.print_exc()
-    
-    logger.info("Model downloader patch applied successfully")
-    
+    logger.info("Model downloader API endpoints are now registered in __init__.py")
     return app

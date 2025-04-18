@@ -11,8 +11,14 @@ logger = logging.getLogger('persistence')
 
 # Import our persistence module
 try:
-    # First try to import from the current package
-    from src.persistence.persistence import setup_persistence
+    # First try to import using relative import if this is run as part of a package
+    try:
+        from .persistence import setup_persistence
+    except ImportError:
+        # If that fails, try to import using an absolute path based on file location
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        sys.path.insert(0, script_dir)
+        from persistence import setup_persistence
     
     # Get the persistent directory but don't run the setup again
     # The setup will be run when the module is imported

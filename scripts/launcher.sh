@@ -86,20 +86,32 @@ ln -sf "$BASE_DIR/models/text_encoders" "$CODE_DIR/models/text_encoders"
 # Also add main models directory link for compatibility
 ln -sf "$BASE_DIR/models" "$CODE_DIR/models_root"
 
-# Apply model downloader patch
-echo "Applying model downloader patches..."
+# Install model downloader extension
+echo "Setting up model downloader..."
 
-# Create the custom node directory
+# Set up directories
+MODEL_DOWNLOADER_PERSISTENT_DIR="$BASE_DIR/custom_nodes/model_downloader"
 CUSTOM_NODE_DIR="$CODE_DIR/custom_nodes"
-mkdir -p "$CUSTOM_NODE_DIR/model_downloader/js"
+MODEL_DOWNLOADER_APP_DIR="$CUSTOM_NODE_DIR/model_downloader"
 
-# Copy the model downloader custom node files
-cp -r "@modelDownloaderDir@"/* "$CUSTOM_NODE_DIR/model_downloader/"
+# Ensure fresh installation
+mkdir -p "$MODEL_DOWNLOADER_PERSISTENT_DIR/js"
+if [ -d "$MODEL_DOWNLOADER_PERSISTENT_DIR" ]; then
+  rm -rf "$MODEL_DOWNLOADER_PERSISTENT_DIR"
+  mkdir -p "$MODEL_DOWNLOADER_PERSISTENT_DIR/js"
+fi
 
-# Copy the model downloader patch to the main directory for import
-cp "$CUSTOM_NODE_DIR/model_downloader/model_downloader_patch.py" "$CODE_DIR/model_downloader_patch.py"
+# Install model downloader to persistent directory
+cp -r "@modelDownloaderDir@"/* "$MODEL_DOWNLOADER_PERSISTENT_DIR/"
 
-# No need to create model_downloader.js or web_extensions.json as they are copied from the src/custom_nodes directory
+# Create symlink for app access
+if [ -e "$MODEL_DOWNLOADER_APP_DIR" ]; then
+  rm -rf "$MODEL_DOWNLOADER_APP_DIR"
+fi
+ln -sf "$MODEL_DOWNLOADER_PERSISTENT_DIR" "$MODEL_DOWNLOADER_APP_DIR"
+
+# Backward compatibility
+cp "$MODEL_DOWNLOADER_PERSISTENT_DIR/model_downloader_patch.py" "$CODE_DIR/model_downloader_patch.py"
 
 # Setup virtual environment if needed
 if [ ! -d "$COMFY_VENV" ]; then
@@ -124,31 +136,9 @@ cp -f "@persistenceMainScript@" "$CODE_DIR/persistent_main.py" 2>/dev/null || tr
 chmod +x "$CODE_DIR/persistent.py"
 chmod +x "$CODE_DIR/persistent_main.py"
 
-# Create a more direct approach to inject our frontend patch
-# First, let's find where the frontend package is installed
-FRONTEND_PATH="$(find "$COMFY_VENV" -path "*/site-packages/comfyui_frontend_package/static" -type d 2>/dev/null)"
-echo "[MODEL_DOWNLOADER] Frontend package path: $FRONTEND_PATH"
-
-# Find the frontend package path for debugging purposes only
-if [ -n "$FRONTEND_PATH" ]; then
-  echo "[MODEL_DOWNLOADER] Found frontend package at: $FRONTEND_PATH"
-  echo "[MODEL_DOWNLOADER] Note: This is a read-only directory managed by Nix"
-else
-  echo "[MODEL_DOWNLOADER] WARNING: Could not find frontend package path"
-fi
-
-# Instead of modifying the frontend package directly, we'll use a custom node approach
-# The custom_nodes directory is already set up earlier in the script
-echo "[MODEL_DOWNLOADER] Using custom node approach for frontend integration"
-
-# Add a debug message to check the custom node installation
-echo "[MODEL_DOWNLOADER] Custom node installed at $CUSTOM_NODE_DIR"
-
-# Modify main.py to import our patches
-if ! grep -q "import model_downloader_patch" "$CODE_DIR/main.py"; then
-  echo -e "\n# Import model downloader patch
-import model_downloader_patch" >> "$CODE_DIR/main.py"
-  echo "Added model downloader patch import to main.py"
+# Ensure frontend integration works through custom node approach
+if [ -d "$CUSTOM_NODE_DIR/model_downloader" ]; then
+  echo "Model downloader extension installed successfully"
 fi
 
 # Check if port is in use
