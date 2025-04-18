@@ -197,6 +197,9 @@ echo "Press Ctrl+C to exit"
 
 # Handle browser opening
 if [ "$OPEN_BROWSER" = true ]; then
+  # Set up a trap to kill the child process when this script receives a signal
+  trap 'kill $PID 2>/dev/null' INT TERM
+  
   # Start ComfyUI in the background
   "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}" &
   PID=$!
@@ -207,16 +210,22 @@ if [ "$OPEN_BROWSER" = true ]; then
     sleep 1
     # Check if process is still running
     if ! kill -0 $PID 2>/dev/null; then
-      echo -e "\033[1;31mComfyUI process exited unexpectedly\033[0m"
+      echo "ComfyUI process exited unexpectedly"
       exit 1
     fi
   done
   
-  echo -e "\033[1;32mComfyUI started! Opening browser...\033[0m"
+  echo "ComfyUI started! Opening browser..."
   open "http://127.0.0.1:$COMFY_PORT"
   
-  # Wait for the process to complete
-  wait $PID
+  # Instead of just waiting, we use a loop that can be interrupted
+  while kill -0 $PID 2>/dev/null; do
+    wait $PID 2>/dev/null || break
+  done
+  
+  # Make sure to clean up any remaining process
+  kill $PID 2>/dev/null || true
+  exit 0
 else
   # Start ComfyUI normally
   exec "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}"
