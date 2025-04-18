@@ -34,6 +34,8 @@ nix run github:jamesbrink/nix-comfyui/[commit-hash] -- --open
 ### Command Line Options
 
 - `--open`: Automatically opens ComfyUI in your browser when the server is ready
+- `--port=XXXX`: Run ComfyUI on a specific port (default: 8188)
+- `--debug` or `--verbose`: Enable detailed debug logging
 
 ### Development Shell
 
@@ -60,12 +62,18 @@ The flake is designed to be simple and extensible. You can customize it by:
 
 ### Project Structure
 
-This flake uses a multi-file approach for better maintainability:
+This flake uses a modular, multi-file approach for better maintainability:
 
 - `flake.nix` - Main flake definition and package configuration
-- `scripts/launcher.sh` - The launcher script that sets up the environment and runs ComfyUI
+- `scripts/` - Modular launcher scripts:
+  - `launcher.sh` - Main entry point that orchestrates the launching process
+  - `config.sh` - Configuration variables and settings
+  - `logger.sh` - Logging utilities with support for different verbosity levels
+  - `install.sh` - Installation and setup procedures
+  - `persistence.sh` - Symlink creation and data persistence management
+  - `runtime.sh` - Runtime execution and process management
 
-This structure makes it easier to maintain and extend the flake as more features are added.
+This modular structure makes the codebase much easier to maintain, debug, and extend as features are added. Each script has a single responsibility, improving code organization and readability.
 
 ## Data Persistence
 

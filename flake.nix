@@ -54,11 +54,41 @@
           ignoreCollisions = true;
         };
         
-        # Create launcher script with substituted variables
         # Copy our persistence scripts to the nix store
         persistenceScript = ./src/persistence/persistence.py;
         persistenceMainScript = ./src/persistence/main.py;
         
+        # Process each script file individually
+        configScript = pkgs.substituteAll {
+          src = ./scripts/config.sh;
+          pythonEnv = pythonEnv;
+          comfyuiSrc = comfyui-src;
+          modelDownloaderDir = modelDownloaderDir;
+          persistenceScript = persistenceScript;
+          persistenceMainScript = persistenceMainScript;
+        };
+        
+        loggerScript = pkgs.substituteAll {
+          src = ./scripts/logger.sh;
+          pythonEnv = pythonEnv;
+        };
+        
+        installScript = pkgs.substituteAll {
+          src = ./scripts/install.sh;
+          pythonEnv = pythonEnv;
+        };
+        
+        persistenceShScript = pkgs.substituteAll {
+          src = ./scripts/persistence.sh;
+          pythonEnv = pythonEnv;
+        };
+        
+        runtimeScript = pkgs.substituteAll {
+          src = ./scripts/runtime.sh;
+          pythonEnv = pythonEnv;
+        };
+        
+        # Main launcher script with substitutions
         launcherScript = pkgs.substituteAll {
           src = ./scripts/launcher.sh;
           pythonEnv = pythonEnv;
@@ -67,6 +97,18 @@
           persistenceScript = persistenceScript;
           persistenceMainScript = persistenceMainScript;
         };
+        
+        # Create a directory with all scripts
+        scriptDir = pkgs.runCommand "comfy-ui-scripts" {} ''
+          mkdir -p $out
+          cp ${configScript} $out/config.sh
+          cp ${loggerScript} $out/logger.sh
+          cp ${installScript} $out/install.sh
+          cp ${persistenceShScript} $out/persistence.sh
+          cp ${runtimeScript} $out/runtime.sh
+          cp ${launcherScript} $out/launcher.sh
+          chmod +x $out/*.sh
+        '';
         
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "comfy-ui";
@@ -89,8 +131,14 @@
             # Copy ComfyUI files
             cp -r ${comfyui-src}/* "$out/share/comfy-ui/"
             
+            # Create scripts directory
+            mkdir -p "$out/share/comfy-ui/scripts"
+            
+            # Copy all script files
+            cp -r ${scriptDir}/* "$out/share/comfy-ui/scripts/"
+            
             # Install the launcher script
-            cp ${launcherScript} "$out/bin/comfy-ui-launcher"
+            ln -s "$out/share/comfy-ui/scripts/launcher.sh" "$out/bin/comfy-ui-launcher"
             chmod +x "$out/bin/comfy-ui-launcher"
             
             # Create a symlink to the launcher
