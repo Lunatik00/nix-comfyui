@@ -1,0 +1,17 @@
+. Keep your responses concise to conserve our context window.
+
+. Do not commit unless asked, or its clear from the user that you are done. NEVER PUSH WITHOUT ASKING.
+
+. When working with flake.nix projects, remember to always run git add ., flakes requires this.
+
+. Leverage shell commands to your advantage when you are condifdent in making simple changes, restruturing directory trees, or renaming files. use mv over cp.
+
+. As your work, identify workflow patterns the user exibits, pay close attention and commit important items to memory, and remove old memories that are no longer relevent
+
+. use replace_file_content efficiently as needed.
+
+. avoid letting files grow so large you can't effectively edit them
+
+. avoid getting ahead of the user. 
+
+. stay calm focused and ready for the challenge

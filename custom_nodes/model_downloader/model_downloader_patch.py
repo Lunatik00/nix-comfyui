@@ -122,13 +122,29 @@ async def download_model(request):
             'error': None
         }
         
+        # Get the file size if possible before starting the download
+        try:
+            # Send a HEAD request to get the content length without downloading the file
+            head_response = requests.head(url, allow_redirects=True, timeout=10)
+            total_size = int(head_response.headers.get('content-length', 0))
+            print(f"[MODEL_DOWNLOADER] File size from HEAD request: {total_size} bytes")
+            
+            # Update the download entry with the total size
+            active_downloads[download_id]['total_size'] = total_size
+        except Exception as e:
+            print(f"[MODEL_DOWNLOADER] Error getting file size: {e}")
+            # If we can't get the size, we'll just use 0 and update it during download
+            total_size = 0
+        
         # Start download in background task
         PromptServer.instance.loop.create_task(download_file(download_id, url, full_path))
         
-        # Return the download ID so the frontend can track progress
+        # Return the download ID and total size so the frontend can track progress
         return web.json_response({
             "success": True, 
             "download_id": download_id,
+            "total_size": total_size,
+            "path": full_path,
             "status": "started"
         })
     except Exception as e:
