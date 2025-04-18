@@ -8,6 +8,7 @@ BASE_DIR="$HOME/.config/comfy-ui"
 CODE_DIR="$BASE_DIR/app"
 COMFY_VENV="$BASE_DIR/venv"
 COMFY_MANAGER_DIR="$BASE_DIR/custom_nodes/ComfyUI-Manager"
+OPEN_BROWSER=false
 
 # Create directory structure
 mkdir -p "$BASE_DIR" "$CODE_DIR" "$BASE_DIR/custom_nodes"
@@ -132,9 +133,12 @@ if nc -z localhost $COMFY_PORT 2>/dev/null; then
 fi
 
 # Display URL info
-echo -e "\033[1;36mWhen ComfyUI is running, open this URL in your browser:\033[0m"
-echo "http://127.0.0.1:$COMFY_PORT"
-echo -e "\nOr run this command to open automatically:\nopen http://127.0.0.1:$COMFY_PORT"
+echo -e "\n-------------------------------------------"
+echo -e "ComfyUI URL: http://127.0.0.1:$COMFY_PORT"
+echo -e "-------------------------------------------"
+echo -e "\033[1;33mNOTE:\033[0m First time startup may take several minutes while dependencies are downloaded."
+echo -e "\033[1;33mNOTE:\033[0m Models will be downloaded automatically when selected in the UI."
+echo -e "\nTo open manually: open http://127.0.0.1:$COMFY_PORT"
 
 # Setup ComfyUI-Manager in code directory if needed
 if [ ! -f "$CODE_DIR/custom_nodes/ComfyUI-Manager" ] && [ ! -L "$CODE_DIR/custom_nodes/ComfyUI-Manager" ]; then
@@ -169,9 +173,51 @@ export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
 export COMFY_PRECISION="fp16"
 export PYTHONPATH="$CODE_DIR:${PYTHONPATH:-}"
 
+# Parse arguments for our launcher
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    "--open")
+      OPEN_BROWSER=true
+      ;;
+    *)
+      ARGS+=("$arg")
+      ;;
+  esac
+done
+
+# For debugging
+# echo "Open Browser: $OPEN_BROWSER"
+# echo "Passing args: ${ARGS[*]}"
+
 # Start ComfyUI
 cd "$CODE_DIR"
-echo -e "\033[1;32mStarting ComfyUI...\033[0m"
-echo "Once the server starts, you can access ComfyUI at: http://127.0.0.1:$COMFY_PORT"
+echo "Starting ComfyUI..."
 echo "Press Ctrl+C to exit"
-exec "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "$@"
+
+# Handle browser opening
+if [ "$OPEN_BROWSER" = true ]; then
+  # Start ComfyUI in the background
+  "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}" &
+  PID=$!
+  
+  # Wait for server to start
+  echo "Waiting for ComfyUI to start..."
+  until nc -z localhost $COMFY_PORT 2>/dev/null; do
+    sleep 1
+    # Check if process is still running
+    if ! kill -0 $PID 2>/dev/null; then
+      echo -e "\033[1;31mComfyUI process exited unexpectedly\033[0m"
+      exit 1
+    fi
+  done
+  
+  echo -e "\033[1;32mComfyUI started! Opening browser...\033[0m"
+  open "http://127.0.0.1:$COMFY_PORT"
+  
+  # Wait for the process to complete
+  wait $PID
+else
+  # Start ComfyUI normally
+  exec "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}"
+fi

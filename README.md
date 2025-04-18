@@ -2,6 +2,14 @@
 
 A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with Python 3.12, optimized for Apple Silicon.
 
+> **Note:** Pull requests are more than welcome! Contributions to this open project are appreciated.
+
+## Quick Start
+
+```bash
+nix run github:jamesbrink/nix-comfyui -- --open
+```
+
 ## Features
 
 - Provides ComfyUI packaged with Python 3.12
@@ -12,20 +20,16 @@ A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymo
 - Includes ComfyUI-Manager for easy extension installation
 - Improved model download experience with automatic backend downloads
 
-## Usage
-
-### Running ComfyUI
+## Additional Options
 
 ```bash
-# Run directly from the flake if you've cloned the repository
-nix run
-
-# Run directly from GitHub without cloning the repository
-nix run github:jamesbrink/nix-comfyui
-
-# Run a specific version using the commit hash
-nix run github:jamesbrink/nix-comfyui/[commit-hash]
+# Run a specific version using a commit hash
+nix run github:jamesbrink/nix-comfyui/[commit-hash] -- --open
 ```
+
+### Command Line Options
+
+- `--open`: Automatically opens ComfyUI in your browser when the server is ready
 
 ### Development Shell
 
@@ -88,6 +92,10 @@ This flake currently provides:
 - PyTorch nightly builds with Apple Silicon optimizations
 - ComfyUI Frontend Package 1.17.0
 - ComfyUI-Manager for extension management
+
+## Model Downloading Patch
+
+This flake includes a custom patch for the model downloading experience. Unlike the default ComfyUI implementation, our patch ensures that when models are selected in the UI, they are automatically downloaded in the background without requiring manual intervention. This significantly improves the user experience by eliminating the need to manually manage model downloads, especially for new users who may not be familiar with the process of obtaining and placing model files.
 
 ## License
 
