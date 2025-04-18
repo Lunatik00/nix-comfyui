@@ -117,18 +117,13 @@ if [ ! -d "$COMFY_VENV" ]; then
   "$COMFY_VENV/bin/pip" install requests
 fi
 
-# Copy our path override module to ensure directory paths are persistent
-mkdir -p "$CODE_DIR/custom_nodes/path_override"
-cp -f "$BASE_DIR/custom_nodes/path_override/path_override.py" "$CODE_DIR/custom_nodes/path_override/path_override.py" 2>/dev/null || true
-cp -f "$BASE_DIR/custom_nodes/path_override/__init__.py" "$CODE_DIR/custom_nodes/path_override/__init__.py" 2>/dev/null || true
-
-# Copy our custom path override patch from the repo if it exists
+# Copy path override module from repo to ensure directory paths are persistent
 PATH_OVERRIDE_DIR="$(dirname "$0")/../custom_nodes/path_override"
 if [ -d "$PATH_OVERRIDE_DIR" ]; then
-  echo "Copying path override module from repo"
+  echo "Installing path override module"
   mkdir -p "$CODE_DIR/custom_nodes/path_override"
-  cp -f "$PATH_OVERRIDE_DIR/path_override.py" "$CODE_DIR/custom_nodes/path_override/path_override.py" 2>/dev/null || true
-  cp -f "$PATH_OVERRIDE_DIR/__init__.py" "$CODE_DIR/custom_nodes/path_override/__init__.py" 2>/dev/null || true
+  cp -f "$PATH_OVERRIDE_DIR/path_override.py" "$CODE_DIR/custom_nodes/path_override/path_override.py"
+  cp -f "$PATH_OVERRIDE_DIR/__init__.py" "$CODE_DIR/custom_nodes/path_override/__init__.py"
 fi
 
 # Copy our persistence script to ensure directory paths are persistent
@@ -155,15 +150,10 @@ echo "[MODEL_DOWNLOADER] Using custom node approach for frontend integration"
 # Add a debug message to check the custom node installation
 echo "[MODEL_DOWNLOADER] Custom node installed at $CUSTOM_NODE_DIR"
 
-# Modify main.py to import our patch
+# Modify main.py to import our patches
 if ! grep -q "import model_downloader_patch" "$CODE_DIR/main.py"; then
   echo -e "\n# Import model downloader patch
-import model_downloader_patch
-
-# Import path override module for persistent directories
-import sys
-sys.path.append('./custom_nodes')
-import path_override" >> "$CODE_DIR/main.py"
+import model_downloader_patch" >> "$CODE_DIR/main.py"
   echo "Added model downloader patch import to main.py"
 fi
 
@@ -247,12 +237,14 @@ export COMFY_USER_DIR="$BASE_DIR"
 # Explicitly point to the user directory where workflows are saved
 export COMFY_SAVE_PATH="$BASE_DIR/user"
 
-# Copy our newly created path_override module if it exists
+# Ensure path_override module exists in the persistent directory
 if [ -d "$(dirname "$0")/../custom_nodes/path_override" ]; then
-  echo "Copying path_override module to ensure persistence"
   mkdir -p "$BASE_DIR/custom_nodes/path_override"
-  cp -f "$(dirname "$0")/../custom_nodes/path_override/path_override.py" "$BASE_DIR/custom_nodes/path_override/path_override.py" 2>/dev/null || true
-  cp -f "$(dirname "$0")/../custom_nodes/path_override/__init__.py" "$BASE_DIR/custom_nodes/path_override/__init__.py" 2>/dev/null || true
+  if [ ! -f "$BASE_DIR/custom_nodes/path_override/path_override.py" ]; then
+    echo "Installing path_override module to persistent directory"
+    cp -f "$(dirname "$0")/../custom_nodes/path_override/path_override.py" "$BASE_DIR/custom_nodes/path_override/path_override.py"
+    cp -f "$(dirname "$0")/../custom_nodes/path_override/__init__.py" "$BASE_DIR/custom_nodes/path_override/__init__.py"
+  fi
 fi
 
 # Parse arguments for our launcher
