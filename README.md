@@ -2,6 +2,8 @@
 
 A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with Python 3.12, optimized for Apple Silicon.
 
+![ComfyUI Demo](comfyui-demo.gif)
+
 > **Note:** Pull requests are more than welcome! Contributions to this open project are appreciated.
 
 ## Quick Start
