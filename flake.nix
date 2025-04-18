@@ -121,43 +121,8 @@
           '';
         };
       in {
-        packages.default = pkgs.stdenv.mkDerivation {
-          pname = "comfy-ui";
-          version = "0.1.0";
-          
-          src = comfyui-src;
-          
-          nativeBuildInputs = [ pkgs.makeWrapper pythonEnv ];
-          buildInputs = [ pkgs.libGL pkgs.libGLU ];
-          
-          # Skip build and configure phases
-          dontBuild = true;
-          dontConfigure = true;
-          
-          installPhase = ''
-            # Create directories
-            mkdir -p "$out/bin"
-            mkdir -p "$out/share/comfy-ui"
-            
-            # Copy ComfyUI files
-            cp -r ${comfyui-src}/* "$out/share/comfy-ui/"
-            
-            # Install the launcher script
-            cp ${launcherScript} "$out/bin/comfy-ui-launcher"
-            chmod +x "$out/bin/comfy-ui-launcher"
-            
-            # Create a symlink to the launcher
-            ln -s "$out/bin/comfy-ui-launcher" "$out/bin/comfy-ui"
-          '';
-              
-          meta = with pkgs.lib; {
-            description = "ComfyUI with Python 3.12";
-            homepage = "https://github.com/comfyanonymous/ComfyUI";
-            license = licenses.gpl3;
-            platforms = platforms.all;
-            mainProgram = "comfy-ui";
-          };
-        };
+        # Reference the package defined in the let block
+        inherit packages;
         
         apps.default = flake-utils.lib.mkApp {
           drv = self.packages.${system}.default;
