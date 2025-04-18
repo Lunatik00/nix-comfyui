@@ -1,5 +1,7 @@
 # ComfyUI Nix Flake
 
+**⚠️ NOTE: Model persistence across runs is not yet fully configured - this feature is in progress.**
+
 A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with Python 3.12, optimized for Apple Silicon.
 
 ![ComfyUI Demo](comfyui-demo.gif)
