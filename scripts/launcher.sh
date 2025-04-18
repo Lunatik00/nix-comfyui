@@ -10,20 +10,41 @@ COMFY_VENV="$BASE_DIR/venv"
 COMFY_MANAGER_DIR="$BASE_DIR/custom_nodes/ComfyUI-Manager"
 OPEN_BROWSER=false
 
-# Create directory structure
+# Create directory structure with all required persistent directories
 mkdir -p "$BASE_DIR" "$CODE_DIR" "$BASE_DIR/custom_nodes"
-mkdir -p "$BASE_DIR/output" "$BASE_DIR/models" "$BASE_DIR/user" "$BASE_DIR/input"
+
+# Create main persistent directories
+mkdir -p "$BASE_DIR/output" "$BASE_DIR/user" "$BASE_DIR/input"
+mkdir -p "$BASE_DIR/user/workflows" "$BASE_DIR/user/default" "$BASE_DIR/user/extra"
+
+# Create model directory structure in the persistent location
+mkdir -p "$BASE_DIR/models/checkpoints" "$BASE_DIR/models/configs" "$BASE_DIR/models/loras"
+mkdir -p "$BASE_DIR/models/vae" "$BASE_DIR/models/clip" "$BASE_DIR/models/clip_vision"
+mkdir -p "$BASE_DIR/models/unet" "$BASE_DIR/models/diffusion_models" "$BASE_DIR/models/controlnet"
+mkdir -p "$BASE_DIR/models/embeddings" "$BASE_DIR/models/diffusers" "$BASE_DIR/models/vae_approx"
+mkdir -p "$BASE_DIR/models/gligen" "$BASE_DIR/models/upscale_models" "$BASE_DIR/models/hypernetworks"
+mkdir -p "$BASE_DIR/models/photomaker" "$BASE_DIR/models/style_models" "$BASE_DIR/models/text_encoders"
+
+# Create specific directories for image inputs if they don't exist
+mkdir -p "$BASE_DIR/input/img" "$BASE_DIR/input/video" "$BASE_DIR/input/mask"
 
 # Always create a fresh installation to ensure we have write permissions
 echo "Installing ComfyUI $COMFY_VERSION in $CODE_DIR"
-# Remove the existing directory completely
+# Remove the existing directory completely (but keep symlinked content safe)
 rm -rf "$CODE_DIR"
 # Recreate it
 mkdir -p "$CODE_DIR"
 # Copy the ComfyUI source
 cp -r "@comfyuiSrc@"/* "$CODE_DIR/"
 echo "$COMFY_VERSION" > "$CODE_DIR/VERSION"
+
+# Copy our persistent main script
+cp -f "$(dirname "$0")/../persistent_main.py" "$CODE_DIR/" 2>/dev/null || true
+
 chmod -R u+rw "$CODE_DIR"
+
+# Ensure model directories exist in the CODE_DIR for symlinks
+mkdir -p "$CODE_DIR/models"
 
 # Install/update ComfyUI-Manager
 if [ ! -d "$COMFY_MANAGER_DIR" ]; then
@@ -38,9 +59,32 @@ fi
 mkdir -p "$CODE_DIR/custom_nodes"
 ln -sf "$COMFY_MANAGER_DIR" "$CODE_DIR/custom_nodes/ComfyUI-Manager"
 ln -sf "$BASE_DIR/output" "$CODE_DIR/output"
-ln -sf "$BASE_DIR/models" "$CODE_DIR/models"
 ln -sf "$BASE_DIR/user" "$CODE_DIR/user"
 ln -sf "$BASE_DIR/input" "$CODE_DIR/input"
+
+# Link each model subdirectory properly
+# This ensures models are stored in the persistent location
+ln -sf "$BASE_DIR/models/checkpoints" "$CODE_DIR/models/checkpoints"
+ln -sf "$BASE_DIR/models/configs" "$CODE_DIR/models/configs"
+ln -sf "$BASE_DIR/models/loras" "$CODE_DIR/models/loras"
+ln -sf "$BASE_DIR/models/vae" "$CODE_DIR/models/vae"
+ln -sf "$BASE_DIR/models/clip" "$CODE_DIR/models/clip"
+ln -sf "$BASE_DIR/models/clip_vision" "$CODE_DIR/models/clip_vision"
+ln -sf "$BASE_DIR/models/unet" "$CODE_DIR/models/unet"
+ln -sf "$BASE_DIR/models/diffusion_models" "$CODE_DIR/models/diffusion_models"
+ln -sf "$BASE_DIR/models/controlnet" "$CODE_DIR/models/controlnet"
+ln -sf "$BASE_DIR/models/embeddings" "$CODE_DIR/models/embeddings"
+ln -sf "$BASE_DIR/models/diffusers" "$CODE_DIR/models/diffusers"
+ln -sf "$BASE_DIR/models/vae_approx" "$CODE_DIR/models/vae_approx"
+ln -sf "$BASE_DIR/models/gligen" "$CODE_DIR/models/gligen"
+ln -sf "$BASE_DIR/models/upscale_models" "$CODE_DIR/models/upscale_models"
+ln -sf "$BASE_DIR/models/hypernetworks" "$CODE_DIR/models/hypernetworks"
+ln -sf "$BASE_DIR/models/photomaker" "$CODE_DIR/models/photomaker"
+ln -sf "$BASE_DIR/models/style_models" "$CODE_DIR/models/style_models"
+ln -sf "$BASE_DIR/models/text_encoders" "$CODE_DIR/models/text_encoders"
+
+# Also add main models directory link for compatibility
+ln -sf "$BASE_DIR/models" "$CODE_DIR/models_root"
 
 # Apply model downloader patch
 echo "Applying model downloader patches..."
@@ -73,6 +117,24 @@ if [ ! -d "$COMFY_VENV" ]; then
   "$COMFY_VENV/bin/pip" install requests
 fi
 
+# Copy our path override module to ensure directory paths are persistent
+mkdir -p "$CODE_DIR/custom_nodes/path_override"
+cp -f "$BASE_DIR/custom_nodes/path_override/path_override.py" "$CODE_DIR/custom_nodes/path_override/path_override.py" 2>/dev/null || true
+cp -f "$BASE_DIR/custom_nodes/path_override/__init__.py" "$CODE_DIR/custom_nodes/path_override/__init__.py" 2>/dev/null || true
+
+# Copy our custom path override patch from the repo if it exists
+PATH_OVERRIDE_DIR="$(dirname "$0")/../custom_nodes/path_override"
+if [ -d "$PATH_OVERRIDE_DIR" ]; then
+  echo "Copying path override module from repo"
+  mkdir -p "$CODE_DIR/custom_nodes/path_override"
+  cp -f "$PATH_OVERRIDE_DIR/path_override.py" "$CODE_DIR/custom_nodes/path_override/path_override.py" 2>/dev/null || true
+  cp -f "$PATH_OVERRIDE_DIR/__init__.py" "$CODE_DIR/custom_nodes/path_override/__init__.py" 2>/dev/null || true
+fi
+
+# Copy our persistence script to ensure directory paths are persistent
+cp -f "@persistenceScript@" "$CODE_DIR/persistent.py" 2>/dev/null || true
+chmod +x "$CODE_DIR/persistent.py"
+
 # Create a more direct approach to inject our frontend patch
 # First, let's find where the frontend package is installed
 FRONTEND_PATH="$(find "$COMFY_VENV" -path "*/site-packages/comfyui_frontend_package/static" -type d 2>/dev/null)"
@@ -95,7 +157,13 @@ echo "[MODEL_DOWNLOADER] Custom node installed at $CUSTOM_NODE_DIR"
 
 # Modify main.py to import our patch
 if ! grep -q "import model_downloader_patch" "$CODE_DIR/main.py"; then
-  echo -e "\n# Import model downloader patch\nimport model_downloader_patch" >> "$CODE_DIR/main.py"
+  echo -e "\n# Import model downloader patch
+import model_downloader_patch
+
+# Import path override module for persistent directories
+import sys
+sys.path.append('./custom_nodes')
+import path_override" >> "$CODE_DIR/main.py"
   echo "Added model downloader patch import to main.py"
 fi
 
@@ -173,6 +241,20 @@ export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
 export COMFY_PRECISION="fp16"
 export PYTHONPATH="$CODE_DIR:${PYTHONPATH:-}"
 
+# Set ComfyUI variables to ensure it uses our persistent directories
+export COMFY_USER_DIR="$BASE_DIR"
+
+# Explicitly point to the user directory where workflows are saved
+export COMFY_SAVE_PATH="$BASE_DIR/user"
+
+# Copy our newly created path_override module if it exists
+if [ -d "$(dirname "$0")/../custom_nodes/path_override" ]; then
+  echo "Copying path_override module to ensure persistence"
+  mkdir -p "$BASE_DIR/custom_nodes/path_override"
+  cp -f "$(dirname "$0")/../custom_nodes/path_override/path_override.py" "$BASE_DIR/custom_nodes/path_override/path_override.py" 2>/dev/null || true
+  cp -f "$(dirname "$0")/../custom_nodes/path_override/__init__.py" "$BASE_DIR/custom_nodes/path_override/__init__.py" 2>/dev/null || true
+fi
+
 # Parse arguments for our launcher
 ARGS=()
 for arg in "$@"; do
@@ -200,6 +282,8 @@ if [ "$OPEN_BROWSER" = true ]; then
   # Set up a trap to kill the child process when this script receives a signal
   trap 'kill $PID 2>/dev/null' INT TERM
   
+    # First run the persistence script to set up symlinks
+  "$COMFY_VENV/bin/python" "$CODE_DIR/persistent.py"
   # Start ComfyUI in the background
   "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}" &
   PID=$!
@@ -227,6 +311,8 @@ if [ "$OPEN_BROWSER" = true ]; then
   kill $PID 2>/dev/null || true
   exit 0
 else
+    # First run the persistence script to set up symlinks
+  "$COMFY_VENV/bin/python" "$CODE_DIR/persistent.py"
   # Start ComfyUI normally
   exec "$COMFY_VENV/bin/python" "$CODE_DIR/main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}"
 fi
