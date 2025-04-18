@@ -239,6 +239,9 @@ async def download_file(download_id, url, full_path):
                 extracted_filename = os.path.basename(full_path)
                 logger.info(f"[{download_id}] Beginning data transfer for {extracted_filename}")
                 
+                # Track start time for speed calculations
+                start_time = time.time()
+                
                 with open(full_path, 'wb') as f:
                     async for chunk in response.content.iter_chunked(1024 * 1024):
                         if not chunk:
@@ -255,10 +258,29 @@ async def download_file(download_id, url, full_path):
                                 current_percent = int((downloaded / total_size) * 100)
                                 active_downloads[download_id]['percent'] = current_percent
                             
+                            # Calculate download speed and ETA
+                            current_time = time.time()
+                            time_elapsed = current_time - start_time
+                            
+                            # Calculate speed (only if we've downloaded something and time has passed)
+                            if downloaded > 0 and time_elapsed > 0:
+                                # Calculate speed in MB/s
+                                speed_mbps = downloaded / (1024 * 1024) / time_elapsed
+                                active_downloads[download_id]['speed'] = round(speed_mbps, 2)
+                                
+                                # Calculate ETA (if we know the total size and have a reasonable speed)
+                                if total_size > 0 and speed_mbps > 0:
+                                    bytes_remaining = total_size - downloaded
+                                    seconds_remaining = bytes_remaining / (speed_mbps * 1024 * 1024)
+                                    active_downloads[download_id]['eta'] = int(seconds_remaining)
+                            
                             # Log progress at 10% increments
                             if current_percent > 0 and current_percent % 10 == 0 and current_percent != percent_logged:
                                 percent_logged = current_percent
-                                logger.info(f"[{download_id}] Download progress: {current_percent}% ({downloaded/(1024*1024):.2f} MB of {total_size/(1024*1024):.2f} MB)")
+                                speed = active_downloads[download_id].get('speed', 0)
+                                eta = active_downloads[download_id].get('eta', 0)
+                                eta_str = f", ETA: {eta//60}m {eta%60}s" if eta else ""
+                                logger.info(f"[{download_id}] Download progress: {current_percent}% ({downloaded/(1024*1024):.2f} MB of {total_size/(1024*1024):.2f} MB, {speed} MB/s{eta_str})")
                             
                             # Only send throttled updates
                             current_time = time.time()
@@ -302,33 +324,30 @@ async def download_file(download_id, url, full_path):
 
 async def send_download_update(download_id):
     """
-    Send a progress update via websocket
+    Send a WebSocket update to all clients about the status of a download
     """
     if download_id in active_downloads:
-        download_info = active_downloads[download_id]
-
-        # Create the progress data
-        progress_data = {
-            'download_id': download_id,
-            'filename': download_info['filename'],
-            'folder': download_info['folder'],
-            'total_size': download_info['total_size'],
-            'downloaded': download_info['downloaded'],
-            'percent': download_info['percent'],
-            'status': download_info['status'],
-            'error': download_info['error'],
-            'timestamp': time.time()
-        }
+        download = active_downloads[download_id]
         
         # Log important status changes
-        if download_info['status'] == 'completed':
-            logger.info(f"Download complete: {download_info['filename']}")
-        elif download_info['status'] == 'error':
-            logger.info(f"Download error: {download_info['error']}")
+        if download['status'] == 'completed':
+            logger.info(f"Download complete: {download.get('filename', '')}")
+        elif download['status'] == 'error':
+            logger.info(f"Download error: {download.get('error', '')}")
         
-        # Send websocket message
+        # Send WebSocket message with all info including speed and ETA
         try:
-            PromptServer.instance.send_sync("model_download_progress", progress_data)
+            # The send_sync method is synchronous despite its name, so don't use await
+            PromptServer.instance.send_sync("model_download_progress", {
+                "download_id": download_id,
+                "status": download['status'],
+                "percent": download.get('percent', 0),
+                "downloaded": download.get('downloaded', 0),
+                "total_size": download.get('total_size', 0),
+                "speed": download.get('speed', 0),
+                "eta": download.get('eta', 0), 
+                "error": download.get('error')
+            })
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
 

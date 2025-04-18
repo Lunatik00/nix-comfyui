@@ -120,6 +120,20 @@
               button.setAttribute('data-total-size', messageData.total_size);
             }
             
+            // Update our tracking object with all message data
+            if (downloadData) {
+              // Copy all properties from the message to our tracking object
+              Object.assign(downloadData, {
+                percent: messageData.percent || 0,
+                downloaded: messageData.downloaded || 0,
+                total_size: messageData.total_size || 0,
+                speed: messageData.speed || 0,
+                eta: messageData.eta || 0,
+                status: messageData.status || 'downloading',
+                error: messageData.error || null
+              });
+            }
+            
             if (messageData.status === 'completed') {
               updateButtonStatus(button, 'completed');
               // Update status in activeDownloads tracking
@@ -136,6 +150,9 @@
               }
               // Check if all downloads are complete to close the dialog
               checkAndCloseDialog();
+            } else {
+              // For in-progress downloads, update button with downloading status and information
+              updateButtonStatus(button, 'downloading');
             }
           });
         } else {
@@ -468,6 +485,36 @@ function updateButtonStatus(button, status, errorMessage) {
     } else {
       console.log('[MODEL_DOWNLOADER] Download completed');
     }
+  } else if (status === 'downloading') {
+    // For downloading status, get the download info from our tracking object
+    const downloadId = button.getAttribute('data-download-id');
+    if (downloadId && downloadId in window.modelDownloader.activeDownloads) {
+      const downloadInfo = window.modelDownloader.activeDownloads[downloadId];
+      
+      // Display percentage
+      let statusText = `${downloadInfo.percent || 0}%`;
+      
+      // Add speed if available
+      if (downloadInfo.speed) {
+        statusText += ` (${downloadInfo.speed} MB/s)`;
+      }
+      
+      // Add ETA if available
+      if (downloadInfo.eta) {
+        const etaMinutes = Math.floor(downloadInfo.eta / 60);
+        const etaSeconds = downloadInfo.eta % 60;
+        statusText += ` - ${etaMinutes}m ${etaSeconds}s remaining`;
+      }
+      
+      button.innerHTML = statusText;
+    } else {
+      // Fallback if we don't have detailed info
+      button.innerHTML = errorMessage || 'Downloading...';
+    }
+    
+    button.disabled = true;
+    button.style.cursor = 'default';
+    button.setAttribute('data-download-status', 'downloading');
   } else if (status === 'error') {
     button.disabled = false;
     button.innerHTML = '❌ Failed - Try Again';
