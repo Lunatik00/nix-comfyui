@@ -145,6 +145,48 @@ src/
 
 This structure ensures clear separation of concerns and makes the codebase easier to maintain and extend.
 
+## Docker Support
+
+> **⚠️ WARNING: Docker support is partially implemented but not yet functional. Cross-compilation for Linux is needed to complete the implementation. This will be addressed in a future update.**
+
+This flake includes preliminary Docker support, aimed at running ComfyUI in a containerized environment while preserving all functionality.
+
+### Building the Docker Image
+
+Use the included `buildDocker` command to create a Docker image:
+
+```bash
+# Build the Docker image
+nix run .#buildDocker
+
+# Or from remote
+nix run github:jamesbrink/nix-comfyui#buildDocker
+```
+
+This creates a Docker image named `comfy-ui:latest` in your local Docker daemon.
+
+### Running the Docker Container
+
+Run the container with:
+
+```bash
+# Create a data directory for persistence
+mkdir -p ./data
+
+# Run the container
+docker run -p 8188:8188 -v "$PWD/data:/data" comfy-ui:latest
+```
+
+### Docker Image Features
+
+- **Full functionality**: Includes all the features of the regular ComfyUI installation
+- **Persistence**: Data is stored in a mounted volume at `/data`
+- **Port exposure**: Web UI available on port 8188
+- **Essential utilities**: Includes bash, coreutils, git, and other necessary tools
+- **Proper environment**: All environment variables set correctly for containerized operation
+
+The Docker image follows the same modular structure as the regular installation, ensuring consistency across deployment methods.
+
 ## License
 
 This flake is provided under the MIT license. ComfyUI itself is licensed under GPL-3.0.

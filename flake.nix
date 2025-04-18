@@ -110,75 +110,118 @@
           chmod +x $out/*.sh
         '';
         
-        packages.default = pkgs.stdenv.mkDerivation {
-          pname = "comfy-ui";
-          version = "0.1.0";
-          
-          src = comfyui-src;
-          
-          nativeBuildInputs = [ pkgs.makeWrapper pythonEnv ];
-          buildInputs = [ pkgs.libGL pkgs.libGLU ];
-          
-          # Skip build and configure phases
-          dontBuild = true;
-          dontConfigure = true;
-          
-          installPhase = ''
-            # Create directories
-            mkdir -p "$out/bin"
-            mkdir -p "$out/share/comfy-ui"
+        # Define all packages in one attribute set
+        packages = rec {
+          default = pkgs.stdenv.mkDerivation {
+            pname = "comfy-ui";
+            version = "0.1.0";
             
-            # Copy ComfyUI files
-            cp -r ${comfyui-src}/* "$out/share/comfy-ui/"
+            src = comfyui-src;
             
-            # Create scripts directory
-            mkdir -p "$out/share/comfy-ui/scripts"
+            nativeBuildInputs = [ pkgs.makeWrapper pythonEnv ];
+            buildInputs = [ pkgs.libGL pkgs.libGLU ];
             
-            # Copy all script files
-            cp -r ${scriptDir}/* "$out/share/comfy-ui/scripts/"
+            # Skip build and configure phases
+            dontBuild = true;
+            dontConfigure = true;
             
-            # Install the launcher script
-            ln -s "$out/share/comfy-ui/scripts/launcher.sh" "$out/bin/comfy-ui-launcher"
-            chmod +x "$out/bin/comfy-ui-launcher"
-            
-            # Create a symlink to the launcher
-            ln -s "$out/bin/comfy-ui-launcher" "$out/bin/comfy-ui"
-          '';
+            installPhase = ''
+              # Create directories
+              mkdir -p "$out/bin"
+              mkdir -p "$out/share/comfy-ui"
               
-          meta = with pkgs.lib; {
-            description = "ComfyUI with Python 3.12";
-            homepage = "https://github.com/comfyanonymous/ComfyUI";
-            license = licenses.gpl3;
-            platforms = platforms.all;
-            mainProgram = "comfy-ui";
+              # Copy ComfyUI files
+              cp -r ${comfyui-src}/* "$out/share/comfy-ui/"
+              
+              # Create scripts directory
+              mkdir -p "$out/share/comfy-ui/scripts"
+              
+              # Copy all script files
+              cp -r ${scriptDir}/* "$out/share/comfy-ui/scripts/"
+              
+              # Install the launcher script
+              ln -s "$out/share/comfy-ui/scripts/launcher.sh" "$out/bin/comfy-ui-launcher"
+              chmod +x "$out/bin/comfy-ui-launcher"
+              
+              # Create a symlink to the launcher
+              ln -s "$out/bin/comfy-ui-launcher" "$out/bin/comfy-ui"
+            '';
+                
+            meta = with pkgs.lib; {
+              description = "ComfyUI with Python 3.12";
+              homepage = "https://github.com/comfyanonymous/ComfyUI";
+              license = licenses.gpl3;
+              platforms = platforms.all;
+              mainProgram = "comfy-ui";
+            };
+          };
+          
+          # Docker image for ComfyUI
+          dockerImage = pkgs.dockerTools.buildImage {
+            name = "comfy-ui";
+            tag = "latest";
+            
+            # Include essential utilities and core dependencies
+            copyToRoot = pkgs.buildEnv {
+              name = "root";
+              paths = [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.netcat
+                pkgs.git
+                pkgs.curl
+                pkgs.cacert
+                pkgs.libGL
+                pkgs.libGLU
+                default
+              ];
+              pathsToLink = [ "/bin" "/etc" "/lib" "/share" ];
+            };
+            
+            # Set up volumes and ports
+            config = {
+              Cmd = [ "/bin/bash" "-c" "export COMFY_USER_DIR=/data && mkdir -p /data && /bin/comfy-ui --listen 0.0.0.0" ];
+              Env = [
+                "COMFY_USER_DIR=/data"
+                "PATH=/bin:/usr/bin"
+                "PYTHONUNBUFFERED=1"
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              ];
+              ExposedPorts = {
+                "8188/tcp" = {};
+              };
+              WorkingDir = "/data";
+              Volumes = {
+                "/data" = {};
+              };
+            };
+          };
+        };
+      in {
+        # Export packages
+        inherit packages;
+        
+        # Define apps
+        apps = {
+          default = flake-utils.lib.mkApp {
+            drv = packages.default;
+            name = "comfy-ui";
+          };
+          
+          # Add a buildDocker command
+          buildDocker = flake-utils.lib.mkApp {
+            drv = pkgs.writeShellScriptBin "build-docker" ''
+              echo "Building Docker image for ComfyUI..."
+              # Load the Docker image directly
+              ${pkgs.docker}/bin/docker load < ${self.packages.${system}.dockerImage}
+              echo "Docker image built successfully! You can now run it with:"
+              echo "docker run -p 8188:8188 -v \$PWD/data:/data comfy-ui:latest"
+            '';
+            name = "build-docker";
           };
         };
         
-        apps.default = flake-utils.lib.mkApp {
-          drv = self.packages.${system}.default;
-          name = "comfy-ui";
-        };
-        
-        devShells.default = pkgs.mkShell {
-          packages = [ pythonEnv ];
-          
-          shellHook = ''
-            echo "ComfyUI development environment activated"
-            export COMFY_USER_DIR="$HOME/.config/comfy-ui"
-            mkdir -p "$COMFY_USER_DIR"
-            echo "User data will be stored in $COMFY_USER_DIR"
-            export PYTHONPATH="$PWD:$PYTHONPATH"
-          '';
-        };
-      in {
-        # Reference the package defined in the let block
-        inherit packages;
-        
-        apps.default = flake-utils.lib.mkApp {
-          drv = self.packages.${system}.default;
-          name = "comfy-ui";
-        };
-        
+        # Define development shell
         devShells.default = pkgs.mkShell {
           packages = [ pythonEnv ];
           
