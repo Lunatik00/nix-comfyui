@@ -25,6 +25,9 @@ source "$SCRIPT_DIR/install.sh"
 source "$SCRIPT_DIR/persistence.sh"
 source "$SCRIPT_DIR/runtime.sh"
 
+# Set the library path with a safe default if it doesn't exist yet
+export LD_LIBRARY_PATH="@libcppPath@:${LD_LIBRARY_PATH:-}"
+
 # Main function
 main() {
     # Parse command-line arguments
