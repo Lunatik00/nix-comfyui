@@ -72,7 +72,9 @@ declare -A DIRECTORIES=(
 # Python packages to install
 BASE_PACKAGES="pyyaml pillow numpy requests"
 ADDITIONAL_PACKAGES="spandrel av GitPython toml rich safetensors"
-TORCH_INSTALL="--pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cpu"
+
+# PyTorch installation will be determined dynamically based on GPU availability
+# This is set in install.sh based on platform detection
 
 # Function to parse command line arguments
 parse_arguments() {

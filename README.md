@@ -2,7 +2,7 @@
 
 **⚠️ NOTE: Model and workflow persistence should work but has not been thoroughly tested yet. Please report any issues.**
 
-A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with Python 3.12, optimized for Apple Silicon.
+A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with Python 3.12. Supports both macOS (Intel/Apple Silicon) and Linux with automatic GPU detection.
 
 ![ComfyUI Demo](comfyui-demo.gif)
 
@@ -19,7 +19,8 @@ nix run github:jamesbrink/nix-comfyui -- --open
 - Provides ComfyUI packaged with Python 3.12
 - Reproducible environment through Nix flakes
 - Hybrid approach: Nix for environment management, pip for Python dependencies
-- Optimized for Apple Silicon with PyTorch nightly builds
+- Cross-platform support: macOS (Intel/Apple Silicon) and Linux
+- Automatic GPU detection: CUDA on Linux, MPS on Apple Silicon
 - Persistent user data directory
 - Includes ComfyUI-Manager for easy extension installation
 - Improved model download experience with automatic backend downloads
@@ -87,13 +88,39 @@ User data is stored in `~/.config/comfy-ui` with the following structure:
 
 This structure ensures your models, outputs, and custom nodes persist between application updates.
 
-## Apple Silicon Support
+## System Requirements
 
-This flake is specifically optimized for Apple Silicon Macs:
+### macOS
+- macOS 10.15+ (Intel or Apple Silicon)
+- Nix package manager
+
+### Linux
+- x86_64 Linux distribution
+- Nix package manager
+- NVIDIA GPU with drivers (optional, for CUDA acceleration)
+- glibc 2.27+
+
+## Platform Support
+
+### Apple Silicon Support
 
 - Uses PyTorch nightly builds with improved MPS (Metal Performance Shaders) support
 - Enables FP16 precision mode for better performance
 - Sets optimal memory management parameters for macOS
+
+### Linux Support
+
+- Automatic NVIDIA GPU detection and CUDA setup
+- Supports CUDA 12.4 for maximum compatibility
+- Automatic library path configuration for system libraries
+- Falls back to CPU-only mode if no GPU is detected
+
+### GPU Detection
+
+The flake automatically detects your hardware and installs the appropriate PyTorch version:
+- **Linux with NVIDIA GPU**: PyTorch with CUDA 12.4 support
+- **macOS with Apple Silicon**: PyTorch with MPS acceleration
+- **Other systems**: CPU-only PyTorch
 
 ## Version Information
 
@@ -153,6 +180,8 @@ This flake includes preliminary Docker support, aimed at running ComfyUI in a co
 
 ### Building the Docker Image
 
+#### CPU Version
+
 Use the included `buildDocker` command to create a Docker image:
 
 ```bash
@@ -165,7 +194,23 @@ nix run github:jamesbrink/nix-comfyui#buildDocker
 
 This creates a Docker image named `comfy-ui:latest` in your local Docker daemon.
 
+#### CUDA (GPU) Version
+
+For Linux systems with NVIDIA GPUs, build the CUDA-enabled image:
+
+```bash
+# Build the CUDA-enabled Docker image
+nix run .#buildDockerCuda
+
+# Or from remote
+nix run github:jamesbrink/nix-comfyui#buildDockerCuda
+```
+
+This creates a Docker image named `comfy-ui:cuda` with GPU acceleration support.
+
 ### Running the Docker Container
+
+#### CPU Version
 
 Run the container with:
 
@@ -177,6 +222,33 @@ mkdir -p ./data
 docker run -p 8188:8188 -v "$PWD/data:/data" comfy-ui:latest
 ```
 
+#### CUDA (GPU) Version
+
+For GPU-accelerated execution:
+
+```bash
+# Create a data directory for persistence
+mkdir -p ./data
+
+# Run with GPU support
+docker run --gpus all -p 8188:8188 -v "$PWD/data:/data" comfy-ui:cuda
+```
+
+**Requirements for CUDA support:**
+- NVIDIA GPU with CUDA support
+- NVIDIA drivers installed on the host system
+- `nvidia-container-toolkit` package installed
+- Docker configured for GPU support
+
+To install nvidia-container-toolkit on Ubuntu/Debian:
+```bash
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo systemctl restart docker
+```
+
 ### Docker Image Features
 
 - **Full functionality**: Includes all the features of the regular ComfyUI installation
@@ -184,6 +256,7 @@ docker run -p 8188:8188 -v "$PWD/data:/data" comfy-ui:latest
 - **Port exposure**: Web UI available on port 8188
 - **Essential utilities**: Includes bash, coreutils, git, and other necessary tools
 - **Proper environment**: All environment variables set correctly for containerized operation
+- **GPU support**: CUDA version includes proper environment variables for NVIDIA GPU access
 
 The Docker image follows the same modular structure as the regular installation, ensuring consistency across deployment methods.
 

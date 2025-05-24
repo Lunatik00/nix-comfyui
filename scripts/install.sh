@@ -114,6 +114,32 @@ install_model_downloader() {
     fi
 }
 
+# Detect GPU and determine PyTorch installation
+detect_pytorch_version() {
+    local TORCH_INSTALL=""
+    
+    # Check for NVIDIA GPU
+    if command -v nvidia-smi &> /dev/null; then
+        log_info "NVIDIA GPU detected"
+        if nvidia-smi &> /dev/null; then
+            log_info "NVIDIA driver is functional"
+            # Install PyTorch with CUDA support
+            TORCH_INSTALL="--pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124"
+        else
+            log_warn "NVIDIA driver not functioning properly, falling back to CPU"
+            TORCH_INSTALL="--pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cpu"
+        fi
+    elif [[ "$OSTYPE" == "darwin"* ]] && [[ $(uname -m) == "arm64" ]]; then
+        log_info "Apple Silicon detected, using MPS acceleration"
+        TORCH_INSTALL="--pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cpu"
+    else
+        log_info "No GPU detected, using CPU-only PyTorch"
+        TORCH_INSTALL="--pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cpu"
+    fi
+    
+    echo "$TORCH_INSTALL"
+}
+
 # Setup Python virtual environment
 setup_venv() {
     log_section "Setting up Python environment"
@@ -126,13 +152,49 @@ setup_venv() {
         log_info "Installing Python dependencies"
         "$COMFY_VENV/bin/pip" install --upgrade pip
         "$COMFY_VENV/bin/pip" install $BASE_PACKAGES
-        "$COMFY_VENV/bin/pip" install -r "$CODE_DIR/requirements.txt"
+        # Skip requirements.txt if it contains errors, install packages directly
+        "$COMFY_VENV/bin/pip" install -r "$CODE_DIR/requirements.txt" 2>/dev/null || {
+            log_warn "Failed to install from requirements.txt, installing packages directly"
+            "$COMFY_VENV/bin/pip" install torch torchvision torchaudio torchsde einops transformers>=4.28.1 tokenizers>=0.13.3 sentencepiece aiohttp aiofiles
+            "$COMFY_VENV/bin/pip" install pyyaml Pillow scipy tqdm psutil kornia scikit-image samarium lark numba
+        }
+        
+        # Detect and install appropriate PyTorch version
+        local TORCH_INSTALL=$(detect_pytorch_version)
+        log_info "Installing PyTorch: $TORCH_INSTALL"
         "$COMFY_VENV/bin/pip" install $TORCH_INSTALL
+        
         "$COMFY_VENV/bin/pip" install $ADDITIONAL_PACKAGES
         
         log_info "Python environment setup complete"
     else
         log_info "Using existing Python environment"
+        # Check if we need to upgrade PyTorch for GPU support
+        local cuda_check_file="$COMFY_VENV/.cuda_checked"
+        if [ ! -f "$cuda_check_file" ] && command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+            # Test CUDA availability with proper library paths
+            local cuda_test_result=1
+            if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+                LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" "$COMFY_VENV/bin/python" -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null && cuda_test_result=0
+            else
+                "$COMFY_VENV/bin/python" -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null && cuda_test_result=0
+            fi
+            
+            if [ $cuda_test_result -ne 0 ]; then
+                log_warn "CUDA not available in current PyTorch installation"
+                log_info "Reinstalling PyTorch with CUDA support..."
+                local TORCH_INSTALL=$(detect_pytorch_version)
+                "$COMFY_VENV/bin/pip" uninstall -y torch torchvision torchaudio
+                "$COMFY_VENV/bin/pip" install $TORCH_INSTALL
+                # Mark as checked after successful installation
+                touch "$cuda_check_file"
+            else
+                log_info "PyTorch already has CUDA support"
+                touch "$cuda_check_file"
+            fi
+        else
+            log_debug "Skipping CUDA check (already verified)"
+        fi
     fi
 }
 

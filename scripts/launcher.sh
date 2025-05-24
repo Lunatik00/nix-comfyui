@@ -25,8 +25,18 @@ source "$SCRIPT_DIR/install.sh"
 source "$SCRIPT_DIR/persistence.sh"
 source "$SCRIPT_DIR/runtime.sh"
 
-# Set the library path with a safe default if it doesn't exist yet
-export LD_LIBRARY_PATH="@libcppPath@:${LD_LIBRARY_PATH:-}"
+# Platform-specific library path handling
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    # Linux: Set LD_LIBRARY_PATH for libstdc++ and other required libraries
+    export LD_LIBRARY_PATH="@libPath@:${LD_LIBRARY_PATH:-}"
+    # Add NVIDIA/CUDA libraries if available
+    if [ -d "/run/opengl-driver/lib" ]; then
+        export LD_LIBRARY_PATH="/run/opengl-driver/lib:${LD_LIBRARY_PATH}"
+    fi
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS: Set DYLD_LIBRARY_PATH if needed (usually not required with Nix)
+    export DYLD_LIBRARY_PATH="@libPath@:${DYLD_LIBRARY_PATH:-}"
+fi
 
 # Main function
 main() {

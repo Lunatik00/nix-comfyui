@@ -74,7 +74,13 @@ start_with_browser() {
     # Start ComfyUI in the background using our persistent_main.py wrapper
     cd "$CODE_DIR"
     log_info "Starting ComfyUI in background..."
-    "$COMFY_VENV/bin/python" "$CODE_DIR/persistent_main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}" &
+    
+    # Ensure library paths are preserved for the Python subprocess
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" "$COMFY_VENV/bin/python" "$CODE_DIR/persistent_main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}" &
+    else
+        "$COMFY_VENV/bin/python" "$CODE_DIR/persistent_main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}" &
+    fi
     PID=$!
     
     # Wait for server to start
@@ -108,7 +114,13 @@ start_normal() {
     
     cd "$CODE_DIR"
     log_info "Starting ComfyUI... Press Ctrl+C to exit"
-    exec "$COMFY_VENV/bin/python" "$CODE_DIR/persistent_main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}"
+    
+    # Ensure library paths are preserved for the Python subprocess
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" exec "$COMFY_VENV/bin/python" "$CODE_DIR/persistent_main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}"
+    else
+        exec "$COMFY_VENV/bin/python" "$CODE_DIR/persistent_main.py" --port "$COMFY_PORT" --force-fp16 "${ARGS[@]}"
+    fi
 }
 
 # Start ComfyUI with appropriate mode

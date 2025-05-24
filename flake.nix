@@ -77,7 +77,6 @@
           modelDownloaderDir = modelDownloaderDir;
           persistenceScript = persistenceScript;
           persistenceMainScript = persistenceMainScript;
-          libcppPath = "${pkgs.stdenv.cc.cc.lib}/lib";
         };
 
         loggerScript = pkgs.substituteAll {
@@ -108,6 +107,7 @@
           modelDownloaderDir = modelDownloaderDir;
           persistenceScript = persistenceScript;
           persistenceMainScript = persistenceMainScript;
+          libPath = "${pkgs.stdenv.cc.cc.lib}/lib";
         };
 
         # Create a directory with all scripts
@@ -175,7 +175,7 @@
             };
           };
 
-          # Docker image for ComfyUI
+          # Docker image for ComfyUI (CPU)
           dockerImage = pkgs.dockerTools.buildImage {
             name = "comfy-ui";
             tag = "latest";
@@ -226,6 +226,64 @@
               };
             };
           };
+
+          # Docker image for ComfyUI with CUDA support
+          dockerImageCuda = pkgs.dockerTools.buildImage {
+            name = "comfy-ui";
+            tag = "cuda";
+
+            # Include essential utilities, core dependencies, and CUDA libraries
+            copyToRoot = pkgs.buildEnv {
+              name = "root";
+              paths = [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.netcat
+                pkgs.git
+                pkgs.curl
+                pkgs.cacert
+                pkgs.libGL
+                pkgs.libGLU
+                pkgs.stdenv.cc.cc.lib
+                default
+              ];
+              pathsToLink = [
+                "/bin"
+                "/etc"
+                "/lib"
+                "/share"
+              ];
+            };
+
+            # Set up volumes and ports
+            config = {
+              Cmd = [
+                "/bin/bash"
+                "-c"
+                "export COMFY_USER_DIR=/data && mkdir -p /data && /bin/comfy-ui --listen 0.0.0.0"
+              ];
+              Env = [
+                "COMFY_USER_DIR=/data"
+                "PATH=/bin:/usr/bin"
+                "PYTHONUNBUFFERED=1"
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                "LD_LIBRARY_PATH=${pkgs.stdenv.cc.cc.lib}/lib"
+                "NVIDIA_VISIBLE_DEVICES=all"
+                "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
+              ];
+              ExposedPorts = {
+                "8188/tcp" = { };
+              };
+              WorkingDir = "/data";
+              Volumes = {
+                "/data" = { };
+              };
+              Labels = {
+                "org.opencontainers.image.description" = "ComfyUI with CUDA support for GPU acceleration";
+                "com.nvidia.volumes.needed" = "nvidia_driver";
+              };
+            };
+          };
         };
       in
       {
@@ -249,6 +307,20 @@
               echo "docker run -p 8188:8188 -v \$PWD/data:/data comfy-ui:latest"
             '';
             name = "build-docker";
+          };
+
+          # Add a buildDockerCuda command
+          buildDockerCuda = flake-utils.lib.mkApp {
+            drv = pkgs.writeShellScriptBin "build-docker-cuda" ''
+              echo "Building Docker image for ComfyUI with CUDA support..."
+              # Load the Docker image directly
+              ${pkgs.docker}/bin/docker load < ${self.packages.${system}.dockerImageCuda}
+              echo "CUDA-enabled Docker image built successfully! You can now run it with:"
+              echo "docker run --gpus all -p 8188:8188 -v \$PWD/data:/data comfy-ui:cuda"
+              echo ""
+              echo "Note: Requires nvidia-container-toolkit and Docker GPU support."
+            '';
+            name = "build-docker-cuda";
           };
         };
 

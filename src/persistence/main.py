@@ -90,4 +90,5 @@ cmd = [sys.executable, original_main] + filtered_args
 logger.info(f"Running command: {' '.join(cmd)}")
 
 # Execute the command and replace the current process
-os.execv(sys.executable, cmd)
+# Make sure to preserve all environment variables, especially LD_LIBRARY_PATH
+os.execve(sys.executable, cmd, os.environ)
