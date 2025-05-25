@@ -59,11 +59,8 @@ main() {
     log_debug "PYTHONPATH: $PYTHONPATH"
     log_debug "COMFYUI_SRC: $COMFYUI_SRC"
     
-    # Installation steps
+    # Installation steps (includes persistence setup)
     install_all
-    
-    # Setup persistence (symlinks)
-    setup_persistence
     
     # Start ComfyUI
     start_comfyui

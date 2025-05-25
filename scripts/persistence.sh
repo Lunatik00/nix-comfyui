@@ -13,9 +13,15 @@ create_symlinks() {
     log_debug "Setting up basic directory symlinks"
     mkdir -p "$CODE_DIR/custom_nodes"
     ln -sf "$COMFY_MANAGER_DIR" "$CODE_DIR/custom_nodes/ComfyUI-Manager"
-    ln -sf "$BASE_DIR/output" "$CODE_DIR/output"
-    ln -sf "$BASE_DIR/user" "$CODE_DIR/user"
-    ln -sf "$BASE_DIR/input" "$CODE_DIR/input"
+    
+    # Remove existing directories before creating symlinks
+    for dir in "output" "user" "input"; do
+        if [ -d "$CODE_DIR/$dir" ] && [ ! -L "$CODE_DIR/$dir" ]; then
+            log_debug "Removing existing directory: $CODE_DIR/$dir"
+            rm -rf "$CODE_DIR/$dir"
+        fi
+        ln -sf "$BASE_DIR/$dir" "$CODE_DIR/$dir"
+    done
     
     # Model downloader symlink
     log_debug "Setting up model downloader symlink"
@@ -42,7 +48,15 @@ create_model_symlinks() {
         "photomaker" "style_models" "text_encoders"
     )
     
+    # Ensure models directory exists
+    mkdir -p "$CODE_DIR/models"
+    
     for dir in "${MODEL_DIRS[@]}"; do
+        # Remove existing directory if it's not a symlink
+        if [ -d "$CODE_DIR/models/$dir" ] && [ ! -L "$CODE_DIR/models/$dir" ]; then
+            log_debug "Removing existing model directory: $CODE_DIR/models/$dir"
+            rm -rf "$CODE_DIR/models/$dir"
+        fi
         ln -sf "$BASE_DIR/models/$dir" "$CODE_DIR/models/$dir"
         log_debug "Linked: $dir"
     done

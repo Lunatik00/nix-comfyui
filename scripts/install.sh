@@ -199,7 +199,7 @@ setup_venv() {
 }
 
 # Setup persistence scripts
-setup_persistence() {
+setup_persistence_scripts() {
     log_section "Setting up persistence scripts"
     
     # Copy our persistence scripts to ensure directory paths are persistent
@@ -218,6 +218,10 @@ install_all() {
     install_comfyui_manager
     install_model_downloader
     setup_venv
+    setup_persistence_scripts
+    
+    # Now set up the actual symlinks
+    source "$SCRIPT_DIR/persistence.sh"
     setup_persistence
     
     log_section "Installation complete"
