@@ -11,7 +11,7 @@ A Nix flake for installing and running [ComfyUI](https://github.com/comfyanonymo
 ## Quick Start
 
 ```bash
-nix run github:jamesbrink/nix-comfyui -- --open
+nix run github:utensils/nix-comfyui -- --open
 ```
 
 ## Features
@@ -29,7 +29,7 @@ nix run github:jamesbrink/nix-comfyui -- --open
 
 ```bash
 # Run a specific version using a commit hash
-nix run github:jamesbrink/nix-comfyui/[commit-hash] -- --open
+nix run github:utensils/nix-comfyui/[commit-hash] -- --open
 ```
 
 ### Command Line Options
@@ -50,7 +50,7 @@ nix develop
 You can install ComfyUI to your profile:
 
 ```bash
-nix profile install github:jamesbrink/nix-comfyui
+nix profile install github:utensils/nix-comfyui
 ```
 
 ## Customization
@@ -189,7 +189,7 @@ Use the included `buildDocker` command to create a Docker image:
 nix run .#buildDocker
 
 # Or from remote
-nix run github:jamesbrink/nix-comfyui#buildDocker
+nix run github:utensils/nix-comfyui#buildDocker
 ```
 
 This creates a Docker image named `comfy-ui:latest` in your local Docker daemon.
@@ -203,7 +203,7 @@ For Linux systems with NVIDIA GPUs, build the CUDA-enabled image:
 nix run .#buildDockerCuda
 
 # Or from remote
-nix run github:jamesbrink/nix-comfyui#buildDockerCuda
+nix run github:utensils/nix-comfyui#buildDockerCuda
 ```
 
 This creates a Docker image named `comfy-ui:cuda` with GPU acceleration support.
