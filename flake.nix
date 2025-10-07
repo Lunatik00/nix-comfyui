@@ -29,7 +29,7 @@
         comfyui-src = pkgs.fetchFromGitHub {
           owner = "comfyanonymous";
           repo = "ComfyUI";
-          rev = "a14c2fc3565277dfe8ab0ecb22a86c1d0a1f72cf"; # v0.3.28
+          rev = "6bd3f8eb9ff2d7c74e8ca75ad1f854a6b256b714"; # v0.3.63
           hash = "sha256-d+RxxBmkwuZwRvPfdHGjZ7pllvbIcoITn9Z/1k3m4KE=";
         };
 
